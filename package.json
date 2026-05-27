@@ -1,6 +1,6 @@
 {
   "name": "reflex-agent",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": false,
   "description": "Local-first knowledge base built by an agent over a chosen directory.",
   "license": "MIT",
