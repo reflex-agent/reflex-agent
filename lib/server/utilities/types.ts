@@ -276,9 +276,44 @@ export const ManifestSchema = z.object({
           }),
         )
         .default([]),
+      /**
+       * Utility-provided workflows. Materialised at runtime — never
+       * written to the Space's `.reflex/workflows/` directory, so
+       * uninstalling the utility cleanly removes them. The scheduler
+       * picks up `hourly`/`daily`/`weekly` triggers; users can still
+       * fire manual ones from the workflows page.
+       *
+       * If a project-stored workflow with the same `id` exists, IT
+       * wins — user explicitly forked the utility's workflow.
+       */
+      workflows: z
+        .array(
+          z.object({
+            id: z
+              .string()
+              .min(1)
+              .max(64)
+              .regex(/^[a-z][a-z0-9-]*$/),
+            label: z.string().min(1).max(120),
+            description: z.string().max(280).optional(),
+            trigger: z.enum(["manual", "hourly", "daily", "weekly"]),
+            steps: z
+              .array(
+                z.object({
+                  id: z.string().min(1).max(64),
+                  kind: z.string().min(1).max(40),
+                  label: z.string().min(1).max(120),
+                  params: z.record(z.string(), z.unknown()).default({}),
+                }),
+              )
+              .min(1)
+              .max(20),
+          }),
+        )
+        .default([]),
       systemPromptAddendum: z.string().max(20_000).optional(),
     })
-    .default({ slashCommands: [], skills: [] }),
+    .default({ slashCommands: [], skills: [], workflows: [] }),
 });
 
 export type Manifest = z.infer<typeof ManifestSchema>;

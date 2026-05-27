@@ -33,8 +33,17 @@ export async function listWorkflowsAction(
   try {
     const entry = await getRoot(rootId);
     if (!entry) return { ok: false, error: "Root not found" };
-    const workflows = await listWorkflows(entry.path);
-    return { ok: true, workflows };
+    const projectWorkflows = await listWorkflows(entry.path);
+    const { collectExtensions } = await import(
+      "@/lib/server/utilities/extensions"
+    );
+    const ext = await collectExtensions({ rootId });
+    const seen = new Set(projectWorkflows.map((w) => w.id));
+    const merged = [
+      ...projectWorkflows,
+      ...ext.workflows.filter((w) => !seen.has(w.id)),
+    ];
+    return { ok: true, workflows: merged };
   } catch (err) {
     return {
       ok: false,

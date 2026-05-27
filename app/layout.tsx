@@ -9,6 +9,12 @@ export const dynamic = "force-dynamic";
 import { Toaster } from "@/components/ui/sonner";
 import { AppSidebar } from "./_components/app-sidebar";
 import { listRoots } from "@/lib/registry";
+import { startScheduler } from "@/lib/server/workflows/scheduler";
+
+// Boot the background workflow scheduler the first time any page is
+// rendered. `startScheduler` is idempotent — guarded by a global, so
+// it's safe to call on every request.
+startScheduler();
 
 export const metadata: Metadata = {
   title: "Reflex",

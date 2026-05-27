@@ -27,7 +27,16 @@ export async function runWorkflow(
 ): Promise<{ ok: true; run: WorkflowRun } | { ok: false; error: string }> {
   const entry = await getRoot(rootId);
   if (!entry) return { ok: false, error: "Root not found" };
-  const wf = await readWorkflow(entry.path, workflowId);
+  // Project-stored workflows win; otherwise consult utility extensions
+  // so a utility-provided workflow can be runWorkflow'd by id.
+  let wf = await readWorkflow(entry.path, workflowId);
+  if (!wf) {
+    const { collectExtensions } = await import(
+      "@/lib/server/utilities/extensions"
+    );
+    const ext = await collectExtensions({ rootId });
+    wf = ext.workflows.find((w) => w.id === workflowId) ?? null;
+  }
   if (!wf) return { ok: false, error: "Workflow not found" };
 
   const run: WorkflowRun = {

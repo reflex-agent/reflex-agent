@@ -1,6 +1,7 @@
 import "server-only";
 import { listUtilities } from "./store";
 import type { Manifest } from "./types";
+import type { WorkflowDef } from "@/lib/server/workflows/types";
 
 /**
  * Aggregator over every installed utility's `manifest.extensions` in a
@@ -40,6 +41,10 @@ export interface UtilityExtensions {
   slashCommands: UtilitySlashCommand[];
   skills: UtilitySkill[];
   promptBlocks: UtilityPromptBlock[];
+  /** Workflows pulled from `manifest.extensions.workflows`, materialised
+   *  with `createdAt`/`updatedAt` set to the install time. The scheduler
+   *  and runner consume these the same way as project-stored workflows. */
+  workflows: WorkflowDef[];
 }
 
 /**
@@ -59,6 +64,7 @@ export async function collectExtensions(args: {
   const slashCommands: UtilitySlashCommand[] = [];
   const skills: UtilitySkill[] = [];
   const promptBlocks: UtilityPromptBlock[] = [];
+  const workflows: WorkflowDef[] = [];
   for (const u of utils) {
     const ext = u.manifest.extensions;
     if (!ext) continue;
@@ -75,6 +81,23 @@ export async function collectExtensions(args: {
     if (ext.systemPromptAddendum && ext.systemPromptAddendum.trim()) {
       promptBlocks.push({ utility: ref, content: ext.systemPromptAddendum });
     }
+    const stamp = new Date().toISOString();
+    for (const wf of ext.workflows ?? []) {
+      workflows.push({
+        id: wf.id,
+        label: wf.label,
+        ...(wf.description ? { description: wf.description } : {}),
+        trigger: wf.trigger,
+        steps: wf.steps.map((s) => ({
+          id: s.id,
+          kind: s.kind as WorkflowDef["steps"][number]["kind"],
+          label: s.label,
+          params: s.params,
+        })),
+        createdAt: stamp,
+        updatedAt: stamp,
+      });
+    }
   }
-  return { slashCommands, skills, promptBlocks };
+  return { slashCommands, skills, promptBlocks, workflows };
 }
