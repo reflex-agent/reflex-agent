@@ -2,6 +2,7 @@ import "server-only";
 import { listRoots, type RegistryEntry } from "@/lib/registry";
 import { listWorkflows, listRuns } from "./store";
 import { runWorkflow } from "./runner";
+import { SYSTEM_TASKS, SYSTEM_TASK_INTERVAL_MS } from "./system-tasks";
 import type { WorkflowDef, WorkflowTrigger } from "./types";
 
 /**
@@ -87,8 +88,30 @@ async function tick(handle: SchedulerHandle): Promise<void> {
         );
       }
     }
+    await processSystemTasks(handle);
   } finally {
     handle.running = false;
+  }
+}
+
+async function processSystemTasks(handle: SchedulerHandle): Promise<void> {
+  for (const task of SYSTEM_TASKS) {
+    const interval = SYSTEM_TASK_INTERVAL_MS[task.trigger];
+    if (!interval) continue;
+    const k = `__system__::${task.id}`;
+    const last = handle.lastFired.get(k) ?? null;
+    if (last !== null && Date.now() - last < interval) continue;
+    handle.lastFired.set(k, Date.now());
+    try {
+      const res = await task.run();
+      if (!res.ok && res.detail) {
+        console.warn(`[scheduler] ${task.id} returned non-ok: ${res.detail}`);
+      }
+    } catch (err) {
+      console.error(
+        `[scheduler] ${task.id} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 }
 
@@ -106,6 +129,7 @@ async function processRoot(
   for (const wf of workflows) {
     const interval = INTERVAL_MS[wf.trigger];
     if (!interval) continue;
+    if (wf.enabled === false) continue;
     const k = key(root.id, wf.id);
     const last = handle.lastFired.get(k) ?? (await diskLastRun(root.path, wf.id));
     if (last !== null && Date.now() - last < interval) continue;

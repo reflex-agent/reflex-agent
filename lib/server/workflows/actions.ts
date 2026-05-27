@@ -103,6 +103,42 @@ export async function saveWorkflowAction(
   }
 }
 
+/**
+ * Toggle a workflow's scheduler-enabled flag. Project-stored workflows
+ * persist the change; utility-provided workflows are read-only so the
+ * UI surfaces a friendlier error in that case.
+ */
+export async function setWorkflowEnabledAction(
+  rootId: string,
+  wfId: string,
+  enabled: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const entry = await getRoot(rootId);
+    if (!entry) return { ok: false, error: "Root not found" };
+    const wf = await readWorkflow(entry.path, wfId);
+    if (!wf) {
+      return {
+        ok: false,
+        error:
+          "Workflow lives in a utility manifest — uninstall or fork it to disable.",
+      };
+    }
+    await writeWorkflow(entry.path, {
+      ...wf,
+      enabled,
+      updatedAt: new Date().toISOString(),
+    });
+    revalidatePath(`/roots/${rootId}/workflows`);
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 export async function deleteWorkflowAction(
   rootId: string,
   wfId: string,

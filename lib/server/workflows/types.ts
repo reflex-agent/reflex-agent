@@ -43,6 +43,14 @@ export interface WorkflowDef {
   updatedAt: string;
   /** Topic that authored or last edited this workflow (pencil → chat). */
   sourceTopicId?: string;
+  /**
+   * Scheduler-only flag. When `false`, the background ticker skips this
+   * workflow even if the trigger interval has elapsed. Manual runs
+   * (run button, /workflow command, runWorkflow API) still fire. Defaults
+   * to `true` if absent — keeps backward compat with workflows written
+   * before this field existed.
+   */
+  enabled?: boolean;
 }
 
 export type StepStatus = "pending" | "running" | "completed" | "failed" | "skipped";
