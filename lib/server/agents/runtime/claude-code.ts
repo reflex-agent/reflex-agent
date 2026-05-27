@@ -73,6 +73,8 @@ interface Runtime {
   };
   manager: {
     emit: (event: AgentEvent) => Promise<void>;
+    registerKiller?: (agentId: string, fn: () => void) => void;
+    clearKiller?: (agentId: string) => void;
   };
 }
 
@@ -120,6 +122,24 @@ export async function runClaudeCode(rt: Runtime): Promise<void> {
     buffer: false,
     stdin: "ignore",
   });
+  // Let the manager kill this subprocess when the user grants "Always
+  // allow" mid-stream — only way to get claude to pick up the new
+  // --allowedTools is to respawn it.
+  rt.manager.registerKiller?.(rt.meta.id, () => {
+    try {
+      sub.kill("SIGTERM");
+      // Hard-kill backstop in case SIGTERM is ignored.
+      setTimeout(() => {
+        try {
+          sub.kill("SIGKILL");
+        } catch {
+          /* already dead */
+        }
+      }, 1500).unref();
+    } catch {
+      /* already dead */
+    }
+  });
   // Map tool_use id → actual tool name so we can recover the precise
   // tool when claude returns a "to write to PATH" error that doesn't
   // include the tool name verbatim. Lives for the duration of this
@@ -133,8 +153,18 @@ export async function runClaudeCode(rt: Runtime): Promise<void> {
         await rt.manager.emit(ev);
       }
     }
-    await sub;
+    try {
+      await sub;
+    } catch (err) {
+      // SIGTERM from the manager (after Always-allow) shows up here — swallow.
+      if (sub.killed) {
+        // intentional; the manager already scheduled a retry turn.
+      } else {
+        throw err;
+      }
+    }
   } finally {
+    rt.manager.clearKiller?.(rt.meta.id);
     if (mcpCfg) await mcpCfg.cleanup();
   }
 }

@@ -140,6 +140,15 @@ interface AgentRuntimeState {
   meta: AgentMeta;
   rootPath: string;
   reflexScope: string;
+  /**
+   * Hook the runtime sets so the manager can kill an in-flight harness
+   * process — used when the user grants "Always allow" mid-stream so we
+   * can respawn claude with the freshly-updated `--allowedTools`.
+   * Cleared by the runtime on natural exit.
+   */
+  killer?: () => void;
+  /** Last user message — replayed when we kill + retry after a permission grant. */
+  lastUserMessage?: string;
 }
 
 class AgentManager {
@@ -227,6 +236,7 @@ class AgentManager {
       systemPrompt: args.systemPrompt,
       rootPath: state.rootPath,
     });
+    state.lastUserMessage = args.userMessage ?? args.prompt;
     this.turnText.set(args.agentId, "");
     const turnId = shortId();
     // Emit the user message first so the projector renders it above the
@@ -464,9 +474,42 @@ class AgentManager {
     const userMessage = `[Reflex] Permission for ${args.tool ?? "action"} (${args.requestId}): ${args.decision}${
       args.scope ? ` (${args.scope})` : ""
     }.${toolPolicyNote} Continue.`;
+
+    // If the grant happened mid-stream AND it added a tool to settings,
+    // the current claude-code subprocess is stuck with the stale
+    // `--allowedTools`. Kill it so the next continueTurn spawns a fresh
+    // process with the updated allow-list — that's the only way claude
+    // picks up the new tool. Without this, the user clicks "Always allow"
+    // and the agent keeps hitting the closed door on every subsequent
+    // tool call in the same turn.
+    const grantedNewTool =
+      originalAction === "tool-policy" &&
+      args.decision === "allow" &&
+      !!args.tool &&
+      !!toolPolicyNote;
+
+    if (wasRunning && grantedNewTool && state.killer) {
+      try {
+        state.killer();
+      } catch {
+        // ignore — process might already be dead
+      }
+      delete state.killer;
+      // Mark idle so continueTurn doesn't bail on "already running".
+      state.meta.status = "idle";
+      // Replay the original user message so the agent restarts the
+      // exact same task with broader tool access.
+      const retryMessage =
+        state.lastUserMessage ??
+        `${userMessage} Retry the previous attempt with the now-allowed tool.`;
+      await this.continueTurn(agentId, retryMessage);
+      return;
+    }
+
     // Only schedule a continuation turn if the agent is idle. If it was
-    // already running, the current turn drives itself to completion and
-    // a `continueTurn` call would race the in-flight invoke.
+    // already running and we didn't kill it (e.g. scope=once or
+    // non-tool-policy permission), the current turn drives itself to
+    // completion and a `continueTurn` call would race the in-flight invoke.
     if (!wasRunning) {
       await this.continueTurn(agentId, userMessage);
     }
@@ -1590,6 +1633,23 @@ class AgentManager {
       `[Reflex] Gemini YouTube summaries you requested:\n\n${blocks.join("\n\n")}\n\n` +
       `Now answer the user based on this context. Do not repeat the summaries verbatim — compose a human-readable response.`;
     await this.continueTurn(agentId, synthesized);
+  }
+
+  /**
+   * Runtime registers a kill function so the manager can SIGTERM the
+   * underlying harness process when the user grants "Always allow"
+   * mid-stream (we need to respawn with updated --allowedTools).
+   */
+  registerKiller(agentId: string, fn: () => void): void {
+    const state = this.agents.get(agentId);
+    if (!state) return;
+    state.killer = fn;
+  }
+
+  clearKiller(agentId: string): void {
+    const state = this.agents.get(agentId);
+    if (!state) return;
+    delete state.killer;
   }
 
   /** Permanently destroy an agent (emits terminal agent-end). */
