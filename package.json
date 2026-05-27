@@ -1,22 +1,46 @@
 {
-  "name": "reflex",
+  "name": "reflex-agent",
   "version": "0.2.1",
-  "private": true,
+  "private": false,
   "description": "Local-first knowledge base built by an agent over a chosen directory.",
+  "license": "MIT",
+  "author": "legostin",
+  "homepage": "https://github.com/legostin/reflex-agent#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/legostin/reflex-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/legostin/reflex-agent/issues"
+  },
   "type": "module",
   "bin": {
-    "reflex": "./dist/cli.js"
+    "reflex": "./dist/bin/cli.js"
+  },
+  "files": [
+    "dist",
+    ".next",
+    "next.config.ts",
+    "packages/utilities",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "next dev -p 3210",
-    "build": "next build",
     "start": "next start -p 3210",
+    "build": "next build && pnpm run build:cli",
     "build:cli": "tsc -p tsconfig.cli.json",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.cli.json --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.cli.json --noEmit",
+    "prepack": "node -e \"require('fs').rmSync('.next/cache', { recursive: true, force: true })\"",
+    "prepublishOnly": "pnpm run build"
   },
   "engines": {
     "node": ">=20"
   },
+  "packageManager": "pnpm@10.29.2",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@openai/codex-sdk": "0.133.0",

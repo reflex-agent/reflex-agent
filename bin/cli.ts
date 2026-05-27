@@ -3,12 +3,24 @@ import { Command } from "commander";
 import { runInit } from "../lib/reflex/commands/init.js";
 import { runWatch } from "../lib/reflex/commands/watch.js";
 import { runChat } from "../lib/reflex/commands/chat.js";
+import { runStart } from "../lib/reflex/commands/start.js";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const pkgPath = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "package.json",
+);
+const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version: string };
 
 const program = new Command();
 program
   .name("reflex")
   .description("Local-first knowledge base built by an agent.")
-  .version("0.1.0");
+  .version(pkg.version);
 
 program
   .command("init")
@@ -40,6 +52,16 @@ program
   .argument("<dir>", "Folder inside an initialized Reflex root")
   .action(async (dir: string) => {
     await runChat(dir);
+  });
+
+program
+  .command("start")
+  .description("Launch the Reflex web UI on http://localhost:3210.")
+  .option("-p, --port <port>", "Port to listen on", "3210")
+  .option("-h, --host <host>", "Host to bind to", "127.0.0.1")
+  .option("--no-open", "Don't open the browser automatically")
+  .action(async (opts: { port: string; host: string; open: boolean }) => {
+    await runStart({ port: Number(opts.port), host: opts.host, open: opts.open });
   });
 
 program.parseAsync(process.argv).catch((err: unknown) => {
