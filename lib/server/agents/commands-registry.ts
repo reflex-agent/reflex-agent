@@ -199,20 +199,41 @@ export function findCommand(trigger: string): CommandDef | null {
 }
 
 /**
+ * Per-utility-declared slash command surfaced into the registry shape.
+ * `source` carries provenance so the chat input can show "from <utility>"
+ * in the palette tooltip, and start-turn can fetch the matching
+ * `promptBlock` / `directAction` at fire time.
+ */
+export interface UtilityCommandDef extends CommandDef {
+  source: {
+    utilityId: string;
+    scope: "global" | "project";
+    /** For agent-mode commands — the markdown block to append to the system prompt. */
+    promptBlock?: string;
+    /** For direct commands — server action name on the owning utility. */
+    directAction?: string;
+  };
+}
+
+/**
  * Parse a chat message looking for a leading `/cmd <payload>`. Returns the
  * matching CommandDef plus the trimmed payload. `null` means "just a
  * regular message — no command here".
+ *
+ * `extraCommands` lets callers fold in dynamic commands (e.g. utility
+ * extensions) discovered per-project. Built-ins take precedence — a
+ * utility can't shadow `/plan` or `/goal`.
  */
 export function detectCommand(
   message: string,
+  extraCommands: CommandDef[] = [],
 ): { def: CommandDef; payload: string } | null {
   const trimmed = message.trim();
   if (!trimmed.startsWith("/")) return null;
-  // Use a tight regex so legit messages that contain slashes mid-text don't
-  // get misinterpreted.
   const m = /^\/([a-z][a-z0-9-]*)(?:\s+([\s\S]*))?$/.exec(trimmed);
   if (!m) return null;
-  const def = findCommand(m[1]!);
+  const trigger = m[1]!;
+  const def = findCommand(trigger) ?? extraCommands.find((c) => c.trigger === trigger);
   if (!def) return null;
   return { def, payload: (m[2] ?? "").trim() };
 }

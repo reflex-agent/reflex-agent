@@ -303,12 +303,17 @@ const BUILTIN: Skill[] = [
   },
 ];
 
-export async function listSkills(rootPath?: string): Promise<SkillMeta[]> {
+export async function listSkills(
+  rootPath?: string,
+  rootId?: string,
+): Promise<SkillMeta[]> {
   const project = rootPath ? await listFromDir(projectSkillsDir(rootPath), "project") : [];
   const global = await listFromDir(GLOBAL_USER_DIR, "global");
+  const fromUtilities = await listFromUtilities(rootId);
   const seen = new Set<string>([
     ...project.map((s) => s.id),
     ...global.map((s) => s.id),
+    ...fromUtilities.map((s) => s.id),
   ]);
   const builtin = BUILTIN.filter((s) => !seen.has(s.id));
   const stripInstructions = ({ instructions: _i, ...m }: Skill): SkillMeta => {
@@ -318,8 +323,33 @@ export async function listSkills(rootPath?: string): Promise<SkillMeta[]> {
   return [
     ...project.map(stripInstructions),
     ...global.map(stripInstructions),
+    ...fromUtilities.map(stripInstructions),
     ...builtin.map(stripInstructions),
   ];
+}
+
+/**
+ * Skills declared inside installed utilities' `manifest.extensions.skills`.
+ * Provenance lives in `author` so the palette can show "from <utility>".
+ */
+async function listFromUtilities(rootId?: string): Promise<Skill[]> {
+  try {
+    const { collectExtensions } = await import(
+      "@/lib/server/utilities/extensions"
+    );
+    const ext = await collectExtensions(rootId ? { rootId } : {});
+    return ext.skills.map((s): Skill => ({
+      id: s.id,
+      title: s.title,
+      description: s.description,
+      author: "user",
+      scope: s.utility.scope === "project" ? "project" : "global",
+      ...(s.workflowId ? { workflowId: s.workflowId } : {}),
+      instructions: s.instructions,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 async function listFromDir(
@@ -366,9 +396,9 @@ async function listFromDir(
 export async function loadSkill(
   id: string,
   rootPath?: string,
+  rootId?: string,
 ): Promise<Skill | null> {
-  // Project skills win over global; both win over builtins — same precedence
-  // as listSkills.
+  // Precedence: project file > global file > utility-provided > builtin.
   if (rootPath) {
     const projectHit = (await listFromDir(projectSkillsDir(rootPath), "project")).find(
       (s) => s.id === id,
@@ -379,6 +409,8 @@ export async function loadSkill(
     (s) => s.id === id,
   );
   if (globalHit) return globalHit;
+  const utilHit = (await listFromUtilities(rootId)).find((s) => s.id === id);
+  if (utilHit) return utilHit;
   return BUILTIN.find((s) => s.id === id) ?? null;
 }
 

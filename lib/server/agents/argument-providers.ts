@@ -32,7 +32,7 @@ export async function listCommandArgsAction(args: {
     switch (args.commandId) {
       case "skill": {
         const root = args.rootId ? await getRoot(args.rootId) : null;
-        const skills = await listSkills(root?.path);
+        const skills = await listSkills(root?.path, args.rootId);
         const items = skills
           .map((s) => ({
             value: s.id,

@@ -215,6 +215,70 @@ export const ManifestSchema = z.object({
       data: z.record(z.string(), z.unknown()).default({}),
     })
     .optional(),
+  /**
+   * Utilities can extend the host. When installed into a Space, a
+   * utility's `extensions` are auto-registered: new slash-commands
+   * appear in the chat palette, declared skills become loadable via
+   * `/skill <id>`, and `systemPromptAddendum` is appended to every
+   * chat system prompt in that Space.
+   *
+   * This is what makes `rflx-task-board` add `/task` + the
+   * `<<reflex:task-create>>` protocol without touching Reflex core —
+   * future utilities can do the same.
+   */
+  extensions: z
+    .object({
+      slashCommands: z
+        .array(
+          z.object({
+            id: z
+              .string()
+              .min(1)
+              .max(64)
+              .regex(/^[a-z][a-z0-9-]*$/),
+            trigger: z
+              .string()
+              .min(1)
+              .max(40)
+              .regex(/^[a-z][a-z0-9-]*$/),
+            label: z.string().min(1).max(60),
+            description: z.string().max(280),
+            icon: z.string().min(1).max(40),
+            kind: z.enum(["agent-mode", "direct"]),
+            usage: z.string().max(200).default(""),
+            allowEmpty: z.boolean().default(false),
+            /**
+             * For `kind: "agent-mode"` — markdown block appended to the
+             * chat system prompt when this command fires. May use
+             * `{payload}` and `{language}` placeholders.
+             */
+            promptBlock: z.string().max(20_000).optional(),
+            /**
+             * For `kind: "direct"` — name of a serverAction declared in
+             * this manifest to invoke when the user runs the command.
+             */
+            directAction: z.string().max(120).optional(),
+          }),
+        )
+        .default([]),
+      skills: z
+        .array(
+          z.object({
+            id: z
+              .string()
+              .min(1)
+              .max(64)
+              .regex(/^[a-z][a-z0-9-]*$/),
+            title: z.string().min(1).max(120),
+            description: z.string().max(280),
+            instructions: z.string().min(1).max(50_000),
+            workflowId: z.string().max(120).optional(),
+          }),
+        )
+        .default([]),
+      systemPromptAddendum: z.string().max(20_000).optional(),
+    })
+    .default({ slashCommands: [], skills: [] }),
 });
 
 export type Manifest = z.infer<typeof ManifestSchema>;

@@ -18,10 +18,11 @@ import {
   researchInstructions,
   widgetInstructionsForCommand,
 } from "./slash-commands";
-import { detectCommand } from "./commands-registry";
+import { detectCommand, type CommandDef } from "./commands-registry";
 import { getTopic, setTopicGoal } from "@/lib/server/topics";
 import { loadSkill } from "@/lib/server/skills";
 import { buildMemoryBlock } from "@/lib/server/memory/inject";
+import { collectExtensions } from "@/lib/server/utilities/extensions";
 
 export interface Attachment {
   name: string;
@@ -82,8 +83,22 @@ export async function startOrchestratorTurn(args: {
   // agent until the goal is achieved. Other agent-mode commands
   // (/research, /widget, /mcp, /skill) just contribute a system-prompt
   // addendum for this turn.
+  // Fold in any utility-declared slash commands so they're recognised
+  // the same as built-ins. The matching utility's `promptBlock` is
+  // appended to the system prompt below.
+  const extensions = await collectExtensions({ rootId: args.rootId });
+  const utilityCommandDefs: CommandDef[] = extensions.slashCommands.map((c) => ({
+    id: `${c.utility.utilityId}:${c.id}`,
+    trigger: c.trigger,
+    label: c.label,
+    description: c.description,
+    kind: c.kind,
+    usage: c.usage,
+    allowEmpty: c.allowEmpty,
+    icon: c.icon,
+  }));
   const command = detectSlashCommand(args.message);
-  const richCommand = detectCommand(args.message);
+  const richCommand = detectCommand(args.message, utilityCommandDefs);
   let effectiveMessage = args.message;
   if (command) {
     if (command.kind === "goal" && command.text) {
@@ -106,7 +121,7 @@ export async function startOrchestratorTurn(args: {
   if (richCommand?.def.id === "skill") {
     const [skillId, ...rest] = richCommand.payload.split(/\s+/);
     if (skillId) {
-      const skill = await loadSkill(skillId, entry.path);
+      const skill = await loadSkill(skillId, entry.path, args.rootId);
       if (skill) {
         let body = skill.instructions;
         // If the skill binds to a workflow, run it now so the agent sees
@@ -179,6 +194,10 @@ export async function startOrchestratorTurn(args: {
     youtubeUrls.length > 0
       ? youtubeSummaryInstructions(youtubeUrls, language)
       : "",
+    // Utility extensions: always-on system prompt addenda first, then
+    // a per-turn block if the user invoked a utility-declared command.
+    ...extensions.promptBlocks.map((p) => p.content),
+    findUtilityCommandPromptBlock(richCommand, extensions, language) ?? "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -255,6 +274,25 @@ export async function startOrchestratorTurn(args: {
  * key points). For purely meta questions ("what player is best",
  * "fix this URL") the agent just answers directly without the directive.
  */
+function findUtilityCommandPromptBlock(
+  rich: { def: CommandDef; payload: string } | null,
+  extensions: Awaited<ReturnType<typeof collectExtensions>>,
+  language: string,
+): string | null {
+  if (!rich || rich.def.kind !== "agent-mode") return null;
+  // Utility commands have ids of the form "<utilityId>:<commandId>".
+  if (!rich.def.id.includes(":")) return null;
+  const hit = extensions.slashCommands.find(
+    (c) =>
+      `${c.utility.utilityId}:${c.id}` === rich.def.id &&
+      c.trigger === rich.def.trigger,
+  );
+  if (!hit?.promptBlock) return null;
+  return hit.promptBlock
+    .replace(/\{payload\}/g, rich.payload)
+    .replace(/\{language\}/g, language);
+}
+
 async function runSkillWorkflow(
   rootId: string,
   workflowId: string,
