@@ -22,6 +22,7 @@ import {
   extractMemoryWrites,
   extractPermissions,
   extractQuestions,
+  extractSkillCreates,
   extractSuggestions,
   hasOnboardingDone,
   extractUtilityDirectives,
@@ -47,6 +48,7 @@ import {
   addSuggestion,
   SUGGESTION_KINDS,
 } from "@/lib/server/suggestions/store";
+import { writeSkill } from "@/lib/server/skills";
 import { generateImage } from "@/lib/server/images/service";
 import {
   buildRecord as buildWidgetRecord,
@@ -1037,6 +1039,7 @@ class AgentManager {
           seq: 0,
         });
       }
+      await this.processSkillCreates(buf, agentId, state.rootPath);
       const utilityDirs = extractUtilityDirectives(buf);
       for (const u of utilityDirs) {
         try {
@@ -1284,6 +1287,48 @@ class AgentManager {
           type: "error",
           message:
             "memory-write failed: " +
+            (err instanceof Error ? err.message : String(err)),
+          agentId,
+          ts: now(),
+          seq: 0,
+        });
+      }
+    }
+  }
+
+  private async processSkillCreates(
+    buf: string,
+    agentId: string,
+    rootPath: string,
+  ): Promise<void> {
+    const items = extractSkillCreates(buf);
+    for (const s of items) {
+      try {
+        const file = await writeSkill({
+          scope: s.scope,
+          id: s.id,
+          title: s.title,
+          description: s.description ?? "",
+          instructions: s.instructions,
+          ...(s.scope === "project" ? { rootPath } : {}),
+          ...(s.workflowId ? { workflowId: s.workflowId } : {}),
+          ...(s.utilityRef ? { utilityRef: s.utilityRef } : {}),
+        });
+        await this.emit({
+          type: "skill-created",
+          scope: s.scope,
+          skillId: s.id,
+          title: s.title,
+          file,
+          agentId,
+          ts: now(),
+          seq: 0,
+        });
+      } catch (err) {
+        await this.emit({
+          type: "error",
+          message:
+            "skill-create failed: " +
             (err instanceof Error ? err.message : String(err)),
           agentId,
           ts: now(),

@@ -42,6 +42,8 @@ export const SUGGESTION_OPEN = "<<reflex:suggestion>>";
 export const SUGGESTION_CLOSE = "<</reflex:suggestion>>";
 export const ONBOARDING_DONE_OPEN = "<<reflex:onboarding-done>>";
 export const ONBOARDING_DONE_CLOSE = "<</reflex:onboarding-done>>";
+export const SKILL_CREATE_OPEN = "<<reflex:skill-create>>";
+export const SKILL_CREATE_CLOSE = "<</reflex:skill-create>>";
 
 export interface PermissionDirective {
   id?: string;
@@ -186,6 +188,39 @@ export function extractSuggestions(text: string): SuggestionDirective[] {
       typeof e.title === "string" &&
       typeof e.description === "string" &&
       typeof e.prompt === "string",
+  );
+}
+
+/**
+ * "I noticed you keep asking me to do X — let's capture that as a skill."
+ * The orchestrator emits this when it spots a recurring pattern in the
+ * Space (or across Spaces for global). Manager validates, writes the
+ * markdown file via `writeSkill`, and emits a `skill-created` event.
+ */
+export interface SkillCreateDirective {
+  scope: "global" | "project";
+  id: string;
+  title: string;
+  description: string;
+  instructions: string;
+  workflowId?: string;
+  utilityRef?: string;
+}
+
+export function extractSkillCreates(text: string): SkillCreateDirective[] {
+  return extractAll<SkillCreateDirective>(
+    text,
+    SKILL_CREATE_OPEN,
+    SKILL_CREATE_CLOSE,
+  ).filter(
+    (e): e is SkillCreateDirective =>
+      !!e &&
+      (e.scope === "global" || e.scope === "project") &&
+      typeof e.id === "string" &&
+      e.id.trim().length > 0 &&
+      typeof e.title === "string" &&
+      typeof e.instructions === "string" &&
+      e.instructions.trim().length > 0,
   );
 }
 

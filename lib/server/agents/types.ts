@@ -159,6 +159,18 @@ export type AgentEvent = AgentEventBase &
      */
     | { type: "onboarding-done" }
     /**
+     * Orchestrator captured a recurring pattern as a new skill via
+     * `<<reflex:skill-create>>`. Surfaced inline so the user sees what
+     * the agent decided to learn.
+     */
+    | {
+        type: "skill-created";
+        scope: "global" | "project";
+        skillId: string;
+        title: string;
+        file: string;
+      }
+    /**
      * The agent generated and installed a new utility via the
      * `<<reflex:utility>>{...}<</reflex:utility>>` marker.
      */

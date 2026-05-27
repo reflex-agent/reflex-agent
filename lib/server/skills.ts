@@ -33,13 +33,35 @@ export interface SkillMeta {
   description: string;
   /** "builtin" for in-process skills, "user" for filesystem-installed. */
   author: "builtin" | "user";
+  /**
+   * Where this skill lives. Global skills work in any Space; project
+   * skills only show up when chatting inside their owner Space.
+   * Builtins are global by definition.
+   */
+  scope: "builtin" | "global" | "project";
+  /**
+   * Optional workflow id that `/skill <this>` invokes before the prompt
+   * is injected. Output is interpolated into the instructions as
+   * `{{workflowOutput}}` and surfaced inline in chat.
+   */
+  workflowId?: string;
+  /**
+   * Optional utility action ref (`<utility-id>.<action>`) the skill
+   * relies on. Currently advisory only — UI surfaces it so the user
+   * knows what's needed; runtime execution comes later.
+   */
+  utilityRef?: string;
 }
 
 export interface Skill extends SkillMeta {
   instructions: string;
 }
 
-const USER_DIR = path.join(reflexHome(), "skills");
+const GLOBAL_USER_DIR = path.join(reflexHome(), "skills");
+
+function projectSkillsDir(rootPath: string): string {
+  return path.join(rootPath, ".reflex", "skills");
+}
 
 const BUILTIN: Skill[] = [
   {
@@ -48,6 +70,7 @@ const BUILTIN: Skill[] = [
     description:
       "Multi-agent research with citation discipline — facts and synthesis land as cross-linked KB entries.",
     author: "builtin",
+    scope: "builtin",
     instructions: [
       "## Skill: deep-research",
       "",
@@ -97,6 +120,7 @@ const BUILTIN: Skill[] = [
     description:
       "Widget-creation helper - suggests the kind and data format.",
     author: "builtin",
+    scope: "builtin",
     instructions: [
       "## Skill: widget-builder",
       "",
@@ -114,6 +138,7 @@ const BUILTIN: Skill[] = [
     description:
       "Designs the dashboard for a new Space: emits a batch of utility/research/widget/goal suggestions based on the folder name (and any signal already in the folder) on the FIRST turn — no Q&A unless the user asks for it.",
     author: "builtin",
+    scope: "builtin",
     instructions: [
       "## Skill: space-onboarding",
       "",
@@ -192,6 +217,7 @@ const BUILTIN: Skill[] = [
     description:
       "Replace global RECENT.md with a fresh summary of the last week from journals and recent chats.",
     author: "builtin",
+    scope: "builtin",
     instructions: [
       "## Skill: memory-rollup",
       "",
@@ -226,6 +252,7 @@ const BUILTIN: Skill[] = [
     description:
       "Read the last 14 journal entries and produce a themed reflection with a generated visual.",
     author: "builtin",
+    scope: "builtin",
     instructions: [
       "## Skill: weekly-reflect",
       "",
@@ -261,6 +288,7 @@ const BUILTIN: Skill[] = [
     description:
       "Turns raw content into clean KB notes with the right kind and meta.",
     author: "builtin",
+    scope: "builtin",
     instructions: [
       "## Skill: kb-curator",
       "",
@@ -275,25 +303,32 @@ const BUILTIN: Skill[] = [
   },
 ];
 
-export async function listSkills(): Promise<SkillMeta[]> {
-  const user = await listUserSkills();
-  const seen = new Set<string>(user.map((s) => s.id));
-  const builtin = BUILTIN.filter((s) => !seen.has(s.id)).map(
-    ({ instructions: _i, ...m }) => {
-      void _i;
-      return m;
-    },
-  );
-  return [...user.map(({ instructions: _i, ...m }) => {
+export async function listSkills(rootPath?: string): Promise<SkillMeta[]> {
+  const project = rootPath ? await listFromDir(projectSkillsDir(rootPath), "project") : [];
+  const global = await listFromDir(GLOBAL_USER_DIR, "global");
+  const seen = new Set<string>([
+    ...project.map((s) => s.id),
+    ...global.map((s) => s.id),
+  ]);
+  const builtin = BUILTIN.filter((s) => !seen.has(s.id));
+  const stripInstructions = ({ instructions: _i, ...m }: Skill): SkillMeta => {
     void _i;
     return m;
-  }), ...builtin];
+  };
+  return [
+    ...project.map(stripInstructions),
+    ...global.map(stripInstructions),
+    ...builtin.map(stripInstructions),
+  ];
 }
 
-async function listUserSkills(): Promise<Skill[]> {
+async function listFromDir(
+  dir: string,
+  scope: "global" | "project",
+): Promise<Skill[]> {
   let entries: import("node:fs").Dirent[];
   try {
-    entries = await fs.readdir(USER_DIR, { withFileTypes: true });
+    entries = await fs.readdir(dir, { withFileTypes: true });
   } catch {
     return [];
   }
@@ -301,7 +336,7 @@ async function listUserSkills(): Promise<Skill[]> {
   for (const e of entries) {
     if (!e.isFile() || !e.name.toLowerCase().endsWith(".md")) continue;
     try {
-      const raw = await fs.readFile(path.join(USER_DIR, e.name), "utf8");
+      const raw = await fs.readFile(path.join(dir, e.name), "utf8");
       const parsed = matter(raw);
       const data = parsed.data as Partial<Skill>;
       const id = typeof data.id === "string" ? data.id : null;
@@ -312,6 +347,13 @@ async function listUserSkills(): Promise<Skill[]> {
         description:
           typeof data.description === "string" ? data.description : "",
         author: "user",
+        scope,
+        ...(typeof data.workflowId === "string"
+          ? { workflowId: data.workflowId }
+          : {}),
+        ...(typeof data.utilityRef === "string"
+          ? { utilityRef: data.utilityRef }
+          : {}),
         instructions: parsed.content.trim(),
       });
     } catch {
@@ -321,9 +363,73 @@ async function listUserSkills(): Promise<Skill[]> {
   return out;
 }
 
-export async function loadSkill(id: string): Promise<Skill | null> {
-  const user = await listUserSkills();
-  const hit = user.find((s) => s.id === id);
-  if (hit) return hit;
+export async function loadSkill(
+  id: string,
+  rootPath?: string,
+): Promise<Skill | null> {
+  // Project skills win over global; both win over builtins — same precedence
+  // as listSkills.
+  if (rootPath) {
+    const projectHit = (await listFromDir(projectSkillsDir(rootPath), "project")).find(
+      (s) => s.id === id,
+    );
+    if (projectHit) return projectHit;
+  }
+  const globalHit = (await listFromDir(GLOBAL_USER_DIR, "global")).find(
+    (s) => s.id === id,
+  );
+  if (globalHit) return globalHit;
   return BUILTIN.find((s) => s.id === id) ?? null;
+}
+
+export interface WriteSkillInput {
+  id: string;
+  title: string;
+  description: string;
+  instructions: string;
+  scope: "global" | "project";
+  rootPath?: string;
+  workflowId?: string;
+  utilityRef?: string;
+}
+
+/**
+ * Persist a user/agent-authored skill to disk. Called by the
+ * `<<reflex:skill-create>>` marker handler and (eventually) by a future
+ * Settings UI. Returns the resolved file path.
+ */
+export async function writeSkill(input: WriteSkillInput): Promise<string> {
+  if (input.scope === "project" && !input.rootPath) {
+    throw new Error("project skill requires rootPath");
+  }
+  const dir =
+    input.scope === "project"
+      ? projectSkillsDir(input.rootPath!)
+      : GLOBAL_USER_DIR;
+  await fs.mkdir(dir, { recursive: true });
+  const slug = sanitizeId(input.id);
+  if (!slug) throw new Error("invalid skill id");
+  const front: Record<string, string> = {
+    id: slug,
+    title: input.title.trim() || slug,
+    description: input.description.trim(),
+  };
+  if (input.workflowId) front.workflowId = input.workflowId;
+  if (input.utilityRef) front.utilityRef = input.utilityRef;
+  const yaml = Object.entries(front)
+    .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
+    .join("\n");
+  const body = `---\n${yaml}\n---\n${input.instructions.trim()}\n`;
+  const file = path.join(dir, `${slug}.md`);
+  await fs.writeFile(file, body, "utf8");
+  return file;
+}
+
+function sanitizeId(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
 }

@@ -100,13 +100,33 @@ export async function startOrchestratorTurn(args: {
   }
 
   // Optional skill loaded for this turn via `/skill <id> [payload]`.
+  // Skills are resolved through project → global → builtin precedence so
+  // a Space-specific override can shadow a global skill with the same id.
   let skillBlock: string | null = null;
   if (richCommand?.def.id === "skill") {
     const [skillId, ...rest] = richCommand.payload.split(/\s+/);
     if (skillId) {
-      const skill = await loadSkill(skillId);
+      const skill = await loadSkill(skillId, entry.path);
       if (skill) {
-        skillBlock = skill.instructions;
+        let body = skill.instructions;
+        // If the skill binds to a workflow, run it now so the agent sees
+        // the freshest output as part of its system prompt. Substitute
+        // `{{workflowOutput}}` if present; otherwise append a context
+        // section so the skill still gets the data.
+        if (skill.workflowId) {
+          const wfOutput = await runSkillWorkflow(
+            args.rootId,
+            skill.workflowId,
+          );
+          if (wfOutput !== null) {
+            if (body.includes("{{workflowOutput}}")) {
+              body = body.replace(/\{\{workflowOutput\}\}/g, wfOutput);
+            } else {
+              body = `${body}\n\n## Workflow output (from \`${skill.workflowId}\`)\n${wfOutput}`;
+            }
+          }
+        }
+        skillBlock = body;
         effectiveMessage = rest.join(" ").trim() || effectiveMessage;
       }
     }
@@ -235,6 +255,27 @@ export async function startOrchestratorTurn(args: {
  * key points). For purely meta questions ("what player is best",
  * "fix this URL") the agent just answers directly without the directive.
  */
+async function runSkillWorkflow(
+  rootId: string,
+  workflowId: string,
+): Promise<string | null> {
+  try {
+    const { runWorkflow } = await import("@/lib/server/workflows/runner");
+    const res = await runWorkflow(rootId, workflowId);
+    if (!res.ok) return null;
+    // Concatenate every step's final output, plain text.
+    const parts: string[] = [];
+    for (const step of res.run.steps) {
+      const out = step.output;
+      if (out === undefined || out === null) continue;
+      parts.push(typeof out === "string" ? out : JSON.stringify(out, null, 2));
+    }
+    return parts.join("\n\n").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 function youtubeSummaryInstructions(urls: string[], language: string): string {
   const isRu =
     /russ/i.test(language) || new RegExp(RU_PREFIX, "i").test(language);

@@ -2,6 +2,7 @@
 
 import { listSkills } from "@/lib/server/skills";
 import { listUtilities } from "@/lib/server/utilities/store";
+import { getRoot } from "@/lib/registry";
 
 /**
  * Inline-arg suggestions for slash commands. After the user types
@@ -30,12 +31,13 @@ export async function listCommandArgsAction(args: {
     const q = (args.query ?? "").trim().toLowerCase();
     switch (args.commandId) {
       case "skill": {
-        const skills = await listSkills();
+        const root = args.rootId ? await getRoot(args.rootId) : null;
+        const skills = await listSkills(root?.path);
         const items = skills
           .map((s) => ({
             value: s.id,
             label: s.title,
-            description: s.description,
+            description: `${s.scope === "project" ? "[project] " : s.scope === "global" ? "[global] " : ""}${s.description}`,
           }))
           .filter((it) => matches(it, q));
         return { ok: true, supported: true, items };

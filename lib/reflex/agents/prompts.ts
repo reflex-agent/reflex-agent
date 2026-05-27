@@ -44,6 +44,7 @@ export async function chatSystemPrompt(scope: ChatScope): Promise<string> {
     workflowInstructions(),
     imageGenInstructions(),
     memoryInstructions(),
+    skillAuthoringInstructions(),
   ].join("\n\n");
 }
 
@@ -299,5 +300,65 @@ function memoryInstructions(): string {
     `  <<reflex:memory>>{"scope":"global","file":"AVOID","op":"append","content":"Evening calls / meetings — do not suggest."}<</reflex:memory>>`,
     "",
     "Then continue the conversation. Short confirmation in prose: \"Noted — early hours, no evenings.\"",
+  ].join("\n");
+}
+
+/**
+ * Auto-skill authorship. The orchestrator watches its own behaviour: when
+ * the user keeps asking for the same kind of work, that's signal a Skill
+ * should exist. Skills land in either the project (one Space only) or
+ * globally (every Space inherits) — same precedence the loader already
+ * uses (project > global > builtin).
+ */
+function skillAuthoringInstructions(): string {
+  return [
+    "## Skill auto-creation — capture recurring patterns",
+    "",
+    "Reflex's `/skill <id>` system lets the user inject a custom instruction pack into any chat. Skills live on disk as markdown files. You — the orchestrator — should propose a new skill whenever you spot a pattern worth crystallising.",
+    "",
+    "### When to propose a skill",
+    "",
+    "Emit a `<<reflex:skill-create>>` marker when ALL of these hold:",
+    "  1. You've handled the same KIND of request from the user at least 3 times (this turn counts as one — check past topics in this Space, look for similar asks).",
+    "  2. The work has a stable recipe — same tool order, same KB write pattern, same output shape. If every instance is genuinely bespoke, skip.",
+    "  3. The recipe doesn't already exist as a builtin (`deep-research`, `weekly-reflect`, `kb-curator`, `widget-builder`, `memory-rollup`, `space-onboarding`) — check that first.",
+    "  4. Captured as a skill, the next instance becomes a one-liner (`/skill <id>`) instead of repeating the same prompt scaffolding.",
+    "",
+    "### Where it lands — scope routing",
+    "",
+    "- **project** — the recipe is specific to THIS Space (terms, repos, files, conventions only meaningful here). Stored under `<root>/.reflex/skills/`.",
+    "- **global** — the recipe makes sense in any Space the user might open (\"explain a regex\", \"draft a meeting follow-up\", \"sanity-check a Russian-to-English translation\"). Stored under `$REFLEX_HOME/skills/`.",
+    "Default to project unless the recipe is clearly user-level, not project-level.",
+    "",
+    "### Marker shape",
+    "",
+    "```",
+    `<<reflex:skill-create>>{`,
+    `  "scope": "global" | "project",`,
+    `  "id": "<kebab-case slug, 3-40 chars>",`,
+    `  "title": "<short human label>",`,
+    `  "description": "<one sentence — shown in the /skill palette>",`,
+    `  "instructions": "<full markdown body the agent gets when this skill is active. Use ## subheaders, numbered steps, examples. Self-contained.>",`,
+    `  "workflowId": "<optional id of a Reflex workflow to run before answering>",`,
+    `  "utilityRef": "<optional 'utility-id.action' the skill relies on>"`,
+    `}<</reflex:skill-create>>`,
+    "```",
+    "",
+    "### Rules",
+    "",
+    "- One marker per turn. If you spotted multiple patterns, propose the strongest one — the others can wait for their own moment.",
+    "- Don't ask permission first. Emit the marker AND a one-line note in the reply: \"Saved as `/skill <id>` (project) — you can edit or delete it in `<root>/.reflex/skills/<id>.md`.\"",
+    "- The `instructions` field should read like a builtin skill: imperative, structured, examples. Not a transcript of what you just did — a recipe for next time.",
+    "- If a workflow already does the heavy lifting (e.g. nightly digest), reference it via `workflowId` so the skill just orchestrates around it.",
+    "- Don't fabricate a pattern after one or two interactions. Three is the floor.",
+    "- Don't create joke / one-off / private-data-leaking skills — these end up on disk.",
+    "",
+    "### Example",
+    "",
+    "Across three topics in the same Space, the user keeps asking you to fetch the latest changelog for the GitHub repo they're studying and summarise it into a KB note. After the third time, in your reply emit:",
+    "",
+    `  <<reflex:skill-create>>{"scope":"project","id":"weekly-changelog-digest","title":"Weekly changelog digest","description":"Fetch the latest commits on a tracked repo and save a 5-bullet summary into KB.","instructions":"## Skill: weekly-changelog-digest\\n\\n1. Use \\\`web.fetch\\\` to GET \\\`https://api.github.com/repos/<owner>/<repo>/commits?per_page=20\\\` (the repo is in PERSONA.md).\\n2. Pick the 5 most consequential commits.\\n3. Emit a \\\`<<reflex:kb>>\\\` with kind=\\\"weekly-changelog\\\", title with the date range, body with 5 bullets + commit-hash links."}<</reflex:skill-create>>`,
+    "",
+    "Then say in prose: \"I keep doing this every Monday — saved as `/skill weekly-changelog-digest`. Try it next week.\"",
   ].join("\n");
 }
