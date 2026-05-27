@@ -92,6 +92,37 @@ export const COMMANDS: CommandDef[] = [
     icon: "Workflow",
   },
   {
+    id: "distill",
+    trigger: "distill",
+    label: "/distill",
+    description:
+      "Pull a URL into the KB — extract key facts, action items, and links to related notes.",
+    kind: "agent-mode",
+    usage: "/distill <url> [focus]",
+    icon: "BookOpenCheck",
+  },
+  {
+    id: "practice",
+    trigger: "practice",
+    label: "/practice",
+    description:
+      "Roleplay a tough conversation — Reflex plays the counterpart and coaches you between turns.",
+    kind: "agent-mode",
+    usage: "/practice <scenario>",
+    icon: "MessagesSquare",
+  },
+  {
+    id: "reflect",
+    trigger: "reflect",
+    label: "/reflect",
+    description:
+      "Daily check-in — three questions adapted to your recent entries, saved as a journal note.",
+    kind: "agent-mode",
+    usage: "/reflect",
+    allowEmpty: true,
+    icon: "Sunrise",
+  },
+  {
     id: "remember",
     trigger: "remember",
     label: "/remember",

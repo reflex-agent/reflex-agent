@@ -173,4 +173,153 @@ export function mcpInstructionsForCommand(
     .join("\n");
 }
 
+/**
+ * "/distill <url> [focus]" — read a URL, extract structured insights,
+ * cross-reference existing KB, save as a `distilled-source` entry with
+ * backlinks. The payload is `"<url> [focus question]"`.
+ */
+export function distillInstructions(payload: string, language: string): string {
+  const tokens = payload.trim().split(/\s+/);
+  const url = tokens[0] ?? "";
+  const focus = tokens.slice(1).join(" ");
+  return [
+    "## /distill — Pull a source into the second brain",
+    "",
+    `Reply in ${language}.`,
+    url ? `Source URL: ${url}` : "No URL provided — ask the user for one and stop.",
+    focus ? `User focus: ${focus}` : "",
+    "",
+    "Procedure (must follow in order):",
+    "  1. Use `WebFetch` on the URL to read the actual content. If it's a YouTube link, emit `<<reflex:youtube-summary>>` instead and stop — the rest of this protocol resumes on the next turn with the summary in context.",
+    "  2. Extract structured fields:",
+    "     - **keyFacts** (3-8 bullets, each verifiable from the source)",
+    "     - **contrarianView** (the strongest counter-argument or a credible disagreement)",
+    "     - **actionItems** (concrete next steps the reader could take)",
+    "     - **followUpQuestions** (what the article didn't answer)",
+    "  3. Search the existing KB via `Glob`/`Grep` for 1-3 adjacent notes — same topic, same domain, same people. Note their rel-paths.",
+    "  4. Pick a hero image: try `reflex.images.search` for a visual that fits the topic; if no provider key is set, skip this step silently.",
+    "  5. Emit exactly one `<<reflex:kb>>` marker:",
+    "",
+    "```",
+    `<<reflex:kb>>{`,
+    `  "kind": "distilled-source",`,
+    `  "title": "<succinct article title — 4-9 words>",`,
+    `  "body": "<markdown: hero image (if any), keyFacts list, contrarianView paragraph, actionItems list, followUpQuestions list, link to source, links to adjacent notes>",`,
+    `  "meta": {`,
+    `    "sourceUrl": "<original URL>",`,
+    `    "sourceDate": "<ISO date from the page if present>",`,
+    `    "backlinks": ["<rel-path>", ...]`,
+    `  }`,
+    `}<</reflex:kb>>`,
+    "```",
+    "",
+    "  6. After the marker, reply with a 2-3 sentence summary plus a list of the adjacent notes found (if any), so the user knows the new entry connects into their graph.",
+    "  7. Don't paraphrase the article in the reply — the entry IS the artifact; the reply is just orientation.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * "/practice <scenario>" — roleplay mode. The orchestrator scopes the
+ * scenario, then dispatches a `counterpart` sub-agent for each user turn.
+ * A `coach` sub-agent provides inline feedback. `/practice end` triggers
+ * the session post-mortem.
+ */
+export function practiceInstructions(payload: string, language: string): string {
+  const isEnd = payload.trim().toLowerCase() === "end";
+  if (isEnd) {
+    return [
+      "## /practice end — Session post-mortem",
+      "",
+      `Reply in ${language}.`,
+      "",
+      "Review the entire conversation in this topic. Produce a written analysis covering:",
+      "  - Timeline (who said what, key inflection points)",
+      "  - Missed openings (places where the user could have steered differently)",
+      "  - Suggested phrasings for the trickiest moments",
+      "  - One-line key insight",
+      "",
+      "Emit a single KB marker:",
+      "",
+      `  <<reflex:kb>>{"kind":"practice-session","title":"<scenario summary>","body":"<full analysis markdown>","meta":{"scenario":"<from earlier in topic>","turns":<n>}}<</reflex:kb>>`,
+      "",
+      "After the marker, give the user a 2-sentence wrap-up and suggest one drill they could practice next.",
+    ].join("\n");
+  }
+  return [
+    "## /practice — Difficult-conversation roleplay",
+    "",
+    `Reply in ${language}.`,
+    payload ? `Scenario: ${payload}` : "No scenario provided.",
+    "",
+    "This is a roleplay session. **You are not the counterpart** — you orchestrate.",
+    "",
+    "First turn protocol (now):",
+    "  1. If the scenario is thin, ask 1-3 scoping questions via `<<reflex:question>>` in a single block:",
+    "     - Who is the counterpart (relationship, role, stake)?",
+    "     - What's the user's goal in this conversation?",
+    "     - Any history that matters (prior conflicts, shared context)?",
+    "  2. If scoping is sufficient, write a brief persona sketch (2-3 lines) and announce \"Session ready — say your opening line.\"",
+    "  3. Persist the scenario + persona to topic memory by emitting:",
+    "",
+    `     <<reflex:kb>>{"kind":"practice-session","title":"<scenario>","body":"### Scenario\\n...\\n### Persona\\n...","meta":{"phase":"setup","scenario":"<short>"}}<</reflex:kb>>`,
+    "",
+    "Subsequent turns (when the user has spoken their line):",
+    "  1. Dispatch the counterpart to deliver one reply, then the coach for feedback. ONE turn = TWO concurrent dispatches:",
+    "",
+    `     <<reflex:dispatch>>{"id":"cp","role":"counterpart","brief":"Persona: <persona>. Goal of the user: <goal>. Respond in character to: <user's last line>. Be realistic — resist, push back, ask clarifying questions when it fits. 1-3 sentences. Don't break character."}<</reflex:dispatch>>`,
+    `     <<reflex:dispatch>>{"id":"co","role":"coach","brief":"You are a communication coach. The user is practicing: <scenario>. They just said: <user's last line>. The counterpart will reply. In 1-2 sentences, name ONE thing the user did well AND ONE thing to improve. Suggest an alternate phrasing for next turn. Plain prose, no marker."}<</reflex:dispatch>>`,
+    "",
+    "  2. On the next turn, you'll see both outputs. Compose the reply as:",
+    "",
+    "     **<Counterpart name>:** \"<counterpart's words>\"",
+    "",
+    "     <details><summary>Coach feedback</summary>",
+    "     <coach output>",
+    "     </details>",
+    "",
+    "End-of-session:",
+    "  - When the user types `/practice end`, the post-mortem protocol kicks in (separate command).",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * "/reflect" — adaptive daily check-in. The orchestrator pulls the last
+ * 7 journal entries, picks 3 questions tailored to them, and lands the
+ * answers as a `journal` KB entry.
+ */
+export function reflectInstructions(language: string): string {
+  return [
+    "## /reflect — Daily check-in",
+    "",
+    `Reply in ${language}.`,
+    "",
+    "Procedure:",
+    "  1. Use `Glob` against `.reflex/kb/journal/*.md` (or `Grep` for `kind: journal` frontmatter) to find the last 7 journal entries. Read them — actual content, not just titles.",
+    "  2. If TODAY's journal already exists (meta.date matches today's date), tell the user it's already done and offer to revisit specific entries instead. Stop.",
+    "  3. Pick 3 questions. The first is general (mood / one-liner today). The next two are ADAPTED — reference something concrete from the recent entries (\"yesterday you mentioned X — where did that land?\", \"three days ago you set goal Y — any movement?\"). If no recent entries exist, fall back to general prompts (energy, one thing learned, one thing avoided).",
+    "  4. Emit a SINGLE `<<reflex:question>>` block with all 3 questions formatted as a numbered list in the `prompt` field; mark `freeText: true`. STOP.",
+    "  5. On the user's next turn (their answers), emit exactly one KB marker:",
+    "",
+    "```",
+    `<<reflex:kb>>{`,
+    `  "kind": "journal",`,
+    `  "title": "<one-line summary of today's entry — derived from the answers>",`,
+    `  "body": "### Question 1\\n<question>\\n\\n<answer>\\n\\n### Question 2\\n<question>\\n\\n<answer>\\n\\n### Question 3\\n<question>\\n\\n<answer>",`,
+    `  "meta": { "date": "<today ISO date>", "mood": "<one-word inferred mood: calm|tense|excited|tired|focused|scattered|down|other>" }`,
+    `}<</reflex:kb>>`,
+    "```",
+    "",
+    "  6. After the marker, give the user a 1-sentence reflection — what stood out across their last few entries vs today. Don't psychoanalyse; just notice.",
+    "",
+    "Constraints:",
+    "  - Don't ask more than 3 questions in step 4. Two-line max per question.",
+    "  - Don't speculate about feelings the user didn't state. Inferred mood is best-guess, not therapy.",
+    "  - If the user explicitly asks for a weekly review during this flow, switch to the `/skill weekly-reflect` flow.",
+  ].join("\n");
+}
+
 export const MAX_GOAL_ITERATIONS = 15;

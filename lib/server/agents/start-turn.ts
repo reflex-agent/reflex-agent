@@ -8,8 +8,11 @@ import { agentManager } from "./manager";
 import { readEvents } from "./events-log";
 import {
   detectSlashCommand,
+  distillInstructions,
   goalInstructions,
   mcpInstructionsForCommand,
+  practiceInstructions,
+  reflectInstructions,
   workflowInstructionsForCommand,
   planInstructions,
   researchInstructions,
@@ -138,6 +141,15 @@ export async function startOrchestratorTurn(args: {
       : "",
     richCommand?.def.id === "workflow"
       ? workflowInstructionsForCommand(richCommand.payload, language)
+      : "",
+    richCommand?.def.id === "distill"
+      ? distillInstructions(richCommand.payload, language)
+      : "",
+    richCommand?.def.id === "practice"
+      ? practiceInstructions(richCommand.payload, language)
+      : "",
+    richCommand?.def.id === "reflect"
+      ? reflectInstructions(language)
       : "",
     skillBlock ?? "",
     args.focusFile ? focusFileInstructions(args.focusFile, reflexScope, language) : "",
