@@ -142,6 +142,17 @@ export type AgentEvent = AgentEventBase &
         cap: number;
       }
     /**
+     * Agent proposed an action via `<<reflex:suggestion>>`. The proposal
+     * is persisted to `<root>/.reflex/suggestions.json` and rendered as
+     * a card on the project dashboard awaiting approve/reject.
+     */
+    | {
+        type: "suggestion-added";
+        suggestionId: string;
+        kind: "utility" | "research" | "widget" | "goal" | "skill";
+        title: string;
+      }
+    /**
      * The agent generated and installed a new utility via the
      * `<<reflex:utility>>{...}<</reflex:utility>>` marker.
      */

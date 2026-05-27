@@ -38,6 +38,8 @@ export const IMAGE_GEN_OPEN = "<<reflex:image-gen>>";
 export const IMAGE_GEN_CLOSE = "<</reflex:image-gen>>";
 export const MEMORY_OPEN = "<<reflex:memory>>";
 export const MEMORY_CLOSE = "<</reflex:memory>>";
+export const SUGGESTION_OPEN = "<<reflex:suggestion>>";
+export const SUGGESTION_CLOSE = "<</reflex:suggestion>>";
 
 export interface PermissionDirective {
   id?: string;
@@ -153,6 +155,35 @@ export function extractMemoryWrites(text: string): MemoryDirective[] {
       typeof e.scope === "string" &&
       typeof e.file === "string" &&
       typeof e.op === "string",
+  );
+}
+
+/**
+ * "I think the user might want X" — agent hypothesises a utility install,
+ * a research topic, a widget, or a goal. Lands on the project dashboard
+ * as a card the user approves or rejects. Approval spawns a topic with
+ * `prompt` pre-seeded; rejection writes it to project AVOID memory.
+ */
+export interface SuggestionDirective {
+  kind: "utility" | "research" | "widget" | "goal" | "skill";
+  title: string;
+  description: string;
+  /** Slash-command or chat message the approve-action will send. */
+  prompt: string;
+}
+
+export function extractSuggestions(text: string): SuggestionDirective[] {
+  return extractAll<SuggestionDirective>(
+    text,
+    SUGGESTION_OPEN,
+    SUGGESTION_CLOSE,
+  ).filter(
+    (e): e is SuggestionDirective =>
+      !!e &&
+      typeof e.kind === "string" &&
+      typeof e.title === "string" &&
+      typeof e.description === "string" &&
+      typeof e.prompt === "string",
   );
 }
 

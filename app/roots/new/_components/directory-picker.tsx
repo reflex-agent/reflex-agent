@@ -131,7 +131,11 @@ export function DirectoryPicker({ initialPath }: { initialPath: string }) {
       }
       toast.success("Directory added");
       dispatchReflex(REFLEX_EVENTS.rootsChanged);
-      router.push(`/roots/${res.id}`);
+      if (res.onboardingTopicId) {
+        router.push(`/roots/${res.id}/chat/${res.onboardingTopicId}`);
+      } else {
+        router.push(`/roots/${res.id}`);
+      }
     });
   };
 

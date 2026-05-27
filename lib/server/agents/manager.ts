@@ -22,6 +22,7 @@ import {
   extractMemoryWrites,
   extractPermissions,
   extractQuestions,
+  extractSuggestions,
   extractUtilityDirectives,
   extractWidgetCreates,
   extractWidgetUpdates,
@@ -30,6 +31,7 @@ import {
   type DispatchDirective,
   type McpAddDirective,
   type MemoryDirective,
+  type SuggestionDirective,
   type WidgetDirective,
   type WorkflowDirective,
   type YoutubeSummaryDirective,
@@ -40,6 +42,10 @@ import {
   isMemoryOp,
   isMemoryScope,
 } from "@/lib/server/memory/types";
+import {
+  addSuggestion,
+  SUGGESTION_KINDS,
+} from "@/lib/server/suggestions/store";
 import { generateImage } from "@/lib/server/images/service";
 import {
   buildRecord as buildWidgetRecord,
@@ -1016,6 +1022,12 @@ class AgentManager {
         }
       }
       await this.processMemoryWrites(buf, agentId, state.rootPath);
+      await this.processSuggestions(
+        buf,
+        agentId,
+        state.rootPath,
+        state.meta.topicId,
+      );
       const utilityDirs = extractUtilityDirectives(buf);
       for (const u of utilityDirs) {
         try {
@@ -1263,6 +1275,59 @@ class AgentManager {
           type: "error",
           message:
             "memory-write failed: " +
+            (err instanceof Error ? err.message : String(err)),
+          agentId,
+          ts: now(),
+          seq: 0,
+        });
+      }
+    }
+  }
+
+  private async processSuggestions(
+    buf: string,
+    agentId: string,
+    rootPath: string,
+    topicId: string,
+  ): Promise<void> {
+    const items = extractSuggestions(buf);
+    for (const s of items) {
+      try {
+        if (
+          !(SUGGESTION_KINDS as readonly string[]).includes(s.kind) ||
+          !s.title?.trim() ||
+          !s.prompt?.trim()
+        ) {
+          await this.emit({
+            type: "error",
+            message: `suggestion rejected: invalid shape (kind=${s.kind})`,
+            agentId,
+            ts: now(),
+            seq: 0,
+          });
+          continue;
+        }
+        const saved = await addSuggestion(rootPath, {
+          kind: s.kind,
+          title: s.title,
+          description: s.description ?? "",
+          prompt: s.prompt,
+          sourceTopicId: topicId,
+        });
+        await this.emit({
+          type: "suggestion-added",
+          suggestionId: saved.id,
+          kind: saved.kind,
+          title: saved.title,
+          agentId,
+          ts: now(),
+          seq: 0,
+        });
+      } catch (err) {
+        await this.emit({
+          type: "error",
+          message:
+            "suggestion failed: " +
             (err instanceof Error ? err.message : String(err)),
           agentId,
           ts: now(),

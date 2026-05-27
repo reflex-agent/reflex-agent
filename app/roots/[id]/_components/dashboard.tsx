@@ -11,6 +11,7 @@ import { DashboardActiveGoals } from "./dashboard-active-goals";
 import { DashboardPendingApprovals } from "./dashboard-pending-approvals";
 import { DashboardRecentKb } from "./dashboard-recent-kb";
 import { DashboardAiSuggestions } from "./dashboard-ai-suggestions";
+import { SuggestionsCard } from "./suggestions-card";
 import { MemoryEditor } from "@/app/_components/memory/memory-editor";
 import { WidgetsGrid } from "./widgets/widgets-grid";
 
@@ -115,6 +116,8 @@ export function Dashboard({ rootId, initialSnapshot }: Props) {
             {t("dashboard.refresh")}
           </Button>
         </div>
+
+        <SuggestionsCard rootId={rootId} />
 
         <WidgetsGrid
           rootId={rootId}

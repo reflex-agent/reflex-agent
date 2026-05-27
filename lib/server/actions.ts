@@ -5,10 +5,18 @@ import { revalidatePath } from "next/cache";
 import { addRoot, markInitialized, removeRoot } from "@/lib/registry";
 import { runInit } from "@/lib/reflex/commands/init";
 import { loadSettings } from "@/lib/settings/store";
+import { createTopic } from "@/lib/server/topics";
+import { startOrchestratorTurn } from "@/lib/server/agents/start-turn";
 
 export interface AddRootResult {
   ok: boolean;
   id?: string;
+  /**
+   * Topic id of the auto-spawned onboarding chat. Caller should redirect
+   * to `/roots/${id}/chat/${onboardingTopicId}` so the user lands right
+   * in the wizard conversation.
+   */
+  onboardingTopicId?: string;
   error?: string;
 }
 
@@ -20,10 +28,44 @@ export async function addRootAction(absPath: string): Promise<AddRootResult> {
     }
     const entry = await addRoot(absPath);
     revalidatePath("/");
-    return { ok: true, id: entry.id };
+    const onboardingTopicId = await spawnOnboardingTopic(entry).catch(
+      () => undefined,
+    );
+    return {
+      ok: true,
+      id: entry.id,
+      ...(onboardingTopicId ? { onboardingTopicId } : {}),
+    };
   } catch (err) {
     return { ok: false, error: describe(err) };
   }
+}
+
+async function spawnOnboardingTopic(entry: {
+  id: string;
+  path: string;
+}): Promise<string | undefined> {
+  const settings = await loadSettings();
+  const assignment = settings.assignments.chat;
+  const firstMessage = "/skill space-onboarding";
+  const topic = await createTopic({
+    root: entry.path,
+    firstMessage: "Space onboarding",
+    harness: assignment.harness,
+    model: assignment.model,
+    language: settings.language,
+  });
+  const res = await startOrchestratorTurn({
+    rootId: entry.id,
+    topicId: topic.meta.id,
+    message: firstMessage,
+    attachments: [],
+  });
+  if ("error" in res) {
+    // Topic created but agent didn't start — the user can still send a
+    // message manually. Return the topicId so they land in it.
+  }
+  return topic.meta.id;
 }
 
 export interface RunInitResult {
