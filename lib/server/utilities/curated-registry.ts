@@ -47,7 +47,7 @@ const INLINE_BASELINE: CuratedUtility[] = [
     category: "productivity",
     description:
       "Kanban tracker with /task, /tasks, /take-task commands. Each code task gets its own git worktree on dispatch so parallel agents never collide. Auto-pickup, PR mode, pre/post hooks.",
-    github: "github:legostin/rflx-task-board@v0.1.0",
+    github: "github:legostin/rflx-task-board@v0.3.0",
     suggestedScope: "project",
     author: "reflex-org",
   },

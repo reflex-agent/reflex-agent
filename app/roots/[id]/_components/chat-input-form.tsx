@@ -47,6 +47,7 @@ import {
   listCommandArgsAction,
   type ArgItem,
 } from "@/lib/server/agents/argument-providers";
+import { listAvailableSlashCommandsAction } from "@/lib/server/chat-commands";
 import {
   clearProjectAction,
   deleteCurrentTopicCommand,
@@ -129,6 +130,19 @@ export function ChatInputForm({
   const [uploading, setUploading] = useState(false);
   const [pending, setPending] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // Slash commands shown in the / palette — built-ins by default, then
+  // utility-declared extensions merged in once the project finishes loading.
+  const [availableCommands, setAvailableCommands] = useState<CommandDef[]>(COMMANDS);
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      const res = await listAvailableSlashCommandsAction({ rootId });
+      if (alive && res.ok) setAvailableCommands(res.commands);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [rootId]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -240,7 +254,7 @@ export function ChatInputForm({
       if (firstSpace < 0) {
         setArgPalette(null);
         const query = value.slice(1).toLowerCase();
-        const items = COMMANDS.filter((c) =>
+        const items = availableCommands.filter((c) =>
           c.trigger.startsWith(query) ||
           c.label.toLowerCase().includes(query) ||
           c.description.toLowerCase().includes(query),
@@ -251,7 +265,7 @@ export function ChatInputForm({
       // Phase 2: past the space — close command palette, maybe open arg palette.
       setCommandPalette(null);
       const head = value.slice(1, firstSpace);
-      const cmd = COMMANDS.find((c) => c.trigger === head);
+      const cmd = availableCommands.find((c) => c.trigger === head);
       if (!cmd) {
         setArgPalette(null);
         return;
@@ -302,7 +316,7 @@ export function ChatInputForm({
         });
       })();
     },
-    [rootId],
+    [rootId, availableCommands],
   );
 
   const closeCommand = useCallback(() => {

@@ -176,6 +176,37 @@ export async function helpAction(): Promise<{
 }
 
 /**
+ * Slash-palette feed for the chat input. Returns built-in commands
+ * plus every command declared by utilities installed in this Space
+ * (via `manifest.extensions.slashCommands`). Built-ins always win on
+ * trigger collision.
+ */
+export async function listAvailableSlashCommandsAction(args: {
+  rootId?: string;
+}): Promise<{ ok: true; commands: CommandDef[] }> {
+  const { collectExtensions } = await import("./utilities/extensions");
+  const ext = await collectExtensions(
+    args.rootId ? { rootId: args.rootId } : {},
+  );
+  const utilityCommands: CommandDef[] = ext.slashCommands.map((c) => ({
+    id: `${c.utility.utilityId}:${c.id}`,
+    trigger: c.trigger,
+    label: c.label,
+    description: c.description,
+    kind: c.kind,
+    usage: c.usage,
+    allowEmpty: c.allowEmpty,
+    icon: c.icon,
+  }));
+  const triggers = new Set(COMMANDS.map((c) => c.trigger));
+  const merged = [
+    ...COMMANDS,
+    ...utilityCommands.filter((c) => !triggers.has(c.trigger)),
+  ];
+  return { ok: true, commands: merged };
+}
+
+/**
  * `/util [fuzzy]` — open an installed utility. Looks across global + the
  * current project. Matching strategy: exact id wins; otherwise
  * case-insensitive substring on id OR name. Single match returns a
