@@ -30,8 +30,8 @@
     "access": "public"
   },
   "scripts": {
-    "dev": "next dev -p 3210",
-    "start": "next start -p 3210",
+    "dev": "next dev -p 3211",
+    "start": "next start -p 3211",
     "build": "next build && pnpm run build:cli",
     "build:cli": "tsc -p tsconfig.cli.json",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.cli.json --noEmit",

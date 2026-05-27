@@ -24,6 +24,9 @@ reflex start            # opens http://localhost:3210 in your browser
 reflex start --port 4000 --no-open
 ```
 
+Dev runs on `:3211` by default so a `pnpm dev` and an installed
+`reflex start` can co-exist without a port collision.
+
 Home page lists registered "Reflex roots". Add a directory via the built-in
 file picker, then click **Run init** on the detail page to have the agent
 build the KB. The left sidebar shows the resulting MD tree under `.reflex/`;
@@ -42,7 +45,7 @@ reflex chat <dir>             # open a chat scoped to dir's KB
 
 ```sh
 pnpm install
-pnpm dev     # http://localhost:3210 (Next dev server with HMR)
+pnpm dev     # http://localhost:3211 (Next dev server with HMR)
 pnpm build   # produce dist/ + .next/ for `reflex start`
 ```
 
