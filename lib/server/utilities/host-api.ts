@@ -153,6 +153,10 @@ const ImagesAttachSchema = z.object({
   rootId: z.string().optional(),
 });
 
+const MermaidValidateSchema = z.object({
+  source: z.string().min(1).max(20_000),
+});
+
 const ImagesPickBestSchema = z.object({
   query: z.string().min(1).max(200),
   alt: z.string().max(280).default(""),
@@ -267,6 +271,8 @@ export async function dispatchHostCall(
         return imagesAttach(ctx, ImagesAttachSchema.parse(rawArgs));
       case "images.pickBest":
         return imagesPickBest(ctx, ImagesPickBestSchema.parse(rawArgs));
+      case "mermaid.validate":
+        return mermaidValidate(ctx, MermaidValidateSchema.parse(rawArgs));
       default:
         throw new Error(`Unknown host method: ${method}`);
     }
@@ -1052,4 +1058,101 @@ async function resolveTargetRoot(
   const entry = await getRoot(id);
   if (!entry) throw new Error(`unknown rootId: ${id}`);
   return { id: entry.id, path: entry.path };
+}
+
+let mermaidParseCache: ((src: string) => Promise<unknown>) | null = null;
+
+/**
+ * Validate a Mermaid diagram. Tries the real `mermaid` package's parser
+ * first (covers all diagram types). Falls back to a regex pre-flight if
+ * mermaid can't be loaded server-side (e.g. needs window) — that path
+ * catches only the most common authoring mistakes but is better than
+ * shipping a broken diagram to the UI.
+ */
+async function mermaidValidate(
+  _ctx: HostContext,
+  args: z.infer<typeof MermaidValidateSchema>,
+): Promise<{ ok: boolean; error?: string }> {
+  const source = args.source.trim();
+  if (!source) return { ok: false, error: "empty diagram" };
+
+  // First the cheap regex pre-flight — flags issues the official parser
+  // sometimes accepts on the happy path but the renderer rejects.
+  const preflightErr = preflightMermaid(source);
+  if (preflightErr) return { ok: false, error: preflightErr };
+
+  // Then the real parser. Lazy-loaded + cached so repeat calls don't
+  // pay the import cost.
+  try {
+    if (!mermaidParseCache) {
+      const mod = (await import("mermaid")) as {
+        default?: { parse?: (src: string) => Promise<unknown> };
+        parse?: (src: string) => Promise<unknown>;
+      };
+      const parser = mod.default?.parse ?? mod.parse;
+      if (typeof parser !== "function") {
+        // Library can't be used here — accept after preflight.
+        return { ok: true };
+      }
+      mermaidParseCache = parser.bind(mod.default ?? mod);
+    }
+    await mermaidParseCache(source);
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function preflightMermaid(src: string): string | null {
+  const lines = src.split("\n").map((l) => l.trim()).filter(Boolean);
+  const head = lines[0] ?? "";
+  // Quick header sanity — mermaid accepts many diagram types; just check
+  // the first non-blank line starts with a known keyword.
+  const KNOWN = [
+    "graph",
+    "flowchart",
+    "sequenceDiagram",
+    "classDiagram",
+    "stateDiagram",
+    "stateDiagram-v2",
+    "erDiagram",
+    "journey",
+    "gantt",
+    "pie",
+    "gitGraph",
+    "mindmap",
+    "timeline",
+    "quadrantChart",
+    "requirementDiagram",
+    "C4Context",
+    "sankey-beta",
+    "xychart-beta",
+    "block-beta",
+  ];
+  if (!KNOWN.some((k) => head === k || head.startsWith(`${k} `))) {
+    return `unrecognised diagram type at line 1: "${head.slice(0, 80)}"`;
+  }
+  // The killer in user-reported diagrams: unquoted labels containing
+  // characters mermaid's lexer treats as syntax (slash in [/foo/] means
+  // parallelogram, parens collide with circle shape, non-ASCII tokens
+  // sometimes trip the lexer if not quoted). Quoting is always safe.
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i]!;
+    // Match the shape `IDENT[content]` where content has special chars
+    // and isn't already quoted.
+    const m = /\b[A-Za-z0-9_]+\[([^\]]+)\]/.exec(line);
+    if (!m) continue;
+    const inner = m[1]!;
+    if (inner.startsWith('"') && inner.endsWith('"')) continue;
+    if (/^[\\/(>{]/.test(inner)) {
+      return `line ${i + 1}: node label starts with a shape-modifier character ("${inner.slice(0, 30)}") — wrap the label in double quotes`;
+    }
+    if (/[()\\/{}|]/.test(inner)) {
+      return `line ${i + 1}: node label contains special characters ("${inner.slice(0, 30)}") — wrap the label in double quotes`;
+    }
+  }
+  return null;
 }
