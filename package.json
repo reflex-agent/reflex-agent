@@ -22,7 +22,6 @@
     ".next",
     "next.config.ts",
     "lib/server/utilities/worker-bootstrap.js",
-    "packages/utilities",
     "README.md",
     "LICENSE"
   ],
