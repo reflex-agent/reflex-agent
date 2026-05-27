@@ -36,6 +36,8 @@ export const WORKFLOW_CREATE_OPEN = "<<reflex:workflow-create>>";
 export const WORKFLOW_CREATE_CLOSE = "<</reflex:workflow-create>>";
 export const IMAGE_GEN_OPEN = "<<reflex:image-gen>>";
 export const IMAGE_GEN_CLOSE = "<</reflex:image-gen>>";
+export const MEMORY_OPEN = "<<reflex:memory>>";
+export const MEMORY_CLOSE = "<</reflex:memory>>";
 
 export interface PermissionDirective {
   id?: string;
@@ -127,6 +129,30 @@ export function extractKbEntries(text: string): KbDirective[] {
   return extractAll<KbDirective>(text, KB_OPEN, KB_CLOSE).filter(
     (e): e is KbDirective =>
       typeof e?.kind === "string" && typeof e?.title === "string",
+  );
+}
+
+/**
+ * Memory marker — the agent decides what facts about the user (global)
+ * or the current project (scope=project) are durable enough to persist.
+ * Handler in manager validates and writes through the same store the
+ * settings UI uses, so the user can edit/wipe anything the agent saved.
+ */
+export interface MemoryDirective {
+  scope: "global" | "project";
+  file: string;
+  op: "append" | "replace" | "remove";
+  content?: string;
+  match?: string;
+}
+
+export function extractMemoryWrites(text: string): MemoryDirective[] {
+  return extractAll<MemoryDirective>(text, MEMORY_OPEN, MEMORY_CLOSE).filter(
+    (e): e is MemoryDirective =>
+      !!e &&
+      typeof e.scope === "string" &&
+      typeof e.file === "string" &&
+      typeof e.op === "string",
   );
 }
 

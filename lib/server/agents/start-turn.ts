@@ -21,6 +21,7 @@ import {
 import { detectCommand } from "./commands-registry";
 import { getTopic, setTopicGoal } from "@/lib/server/topics";
 import { loadSkill } from "@/lib/server/skills";
+import { buildMemoryBlock } from "@/lib/server/memory/inject";
 
 export interface Attachment {
   name: string;
@@ -125,9 +126,11 @@ export async function startOrchestratorTurn(args: {
     reflexScope,
     language,
   });
+  const memoryBlock = await buildMemoryBlock({ rootPath: entry.path });
   const youtubeUrls = extractYoutubeUrls(effectiveMessage);
   const systemPrompt = [
     baseSystemPrompt,
+    memoryBlock,
     activeGoal ? goalInstructions(activeGoal, language) : "",
     command?.kind === "plan" ? planInstructions(language) : "",
     richCommand?.def.id === "research"

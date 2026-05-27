@@ -76,7 +76,9 @@
     "refreshFailed": "Failed to refresh dashboard",
     "projectOverview": "Project overview",
     "projectOverviewHint": "Drag blocks. Hidden ones come back from the library. Widgets are created and updated via chat with the agent.",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "memoryTitle": "Project memory",
+    "memoryHint": "What Reflex remembers about this project — separate from global memory. The agent fills it in as you talk."
   },
   "pendingApprovals": {
     "title": "Waiting for you",

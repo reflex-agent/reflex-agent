@@ -129,6 +129,19 @@ export type AgentEvent = AgentEventBase &
         absPath: string;
       }
     /**
+     * Agent updated user / project memory via `<<reflex:memory>>`. Emitted
+     * after the on-disk file changed. Surfaced in chat as a small
+     * confirmation card.
+     */
+    | {
+        type: "memory-write";
+        scope: "global" | "project";
+        file: string;
+        op: "append" | "replace" | "remove";
+        lines: number;
+        cap: number;
+      }
+    /**
      * The agent generated and installed a new utility via the
      * `<<reflex:utility>>{...}<</reflex:utility>>` marker.
      */

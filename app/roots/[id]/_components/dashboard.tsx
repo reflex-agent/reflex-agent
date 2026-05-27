@@ -11,6 +11,7 @@ import { DashboardActiveGoals } from "./dashboard-active-goals";
 import { DashboardPendingApprovals } from "./dashboard-pending-approvals";
 import { DashboardRecentKb } from "./dashboard-recent-kb";
 import { DashboardAiSuggestions } from "./dashboard-ai-suggestions";
+import { MemoryEditor } from "@/app/_components/memory/memory-editor";
 import { WidgetsGrid } from "./widgets/widgets-grid";
 
 interface Props {
@@ -122,6 +123,13 @@ export function Dashboard({ rootId, initialSnapshot }: Props) {
           systemRenderers={systemRenderers}
           snapshot={snapshot}
           onLayoutChanged={refresh}
+        />
+
+        <MemoryEditor
+          scope="project"
+          rootId={rootId}
+          title={t("dashboard.memoryTitle")}
+          description={t("dashboard.memoryHint")}
         />
       </div>
     </div>

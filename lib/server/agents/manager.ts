@@ -19,6 +19,7 @@ import {
   extractImageGens,
   extractKbEntries,
   extractMcpAdds,
+  extractMemoryWrites,
   extractPermissions,
   extractQuestions,
   extractUtilityDirectives,
@@ -28,10 +29,17 @@ import {
   extractYoutubeSummaries,
   type DispatchDirective,
   type McpAddDirective,
+  type MemoryDirective,
   type WidgetDirective,
   type WorkflowDirective,
   type YoutubeSummaryDirective,
 } from "./protocol";
+import { writeMemory } from "@/lib/server/memory/store";
+import {
+  isMemoryFile,
+  isMemoryOp,
+  isMemoryScope,
+} from "@/lib/server/memory/types";
 import { generateImage } from "@/lib/server/images/service";
 import {
   buildRecord as buildWidgetRecord,
@@ -1007,6 +1015,7 @@ class AgentManager {
           });
         }
       }
+      await this.processMemoryWrites(buf, agentId, state.rootPath);
       const utilityDirs = extractUtilityDirectives(buf);
       for (const u of utilityDirs) {
         try {
@@ -1202,6 +1211,67 @@ class AgentManager {
    * Each becomes one JSON file on disk; we emit a `workflow-event` so
    * chat-view can surface a preview card linking to the editor.
    */
+  private async processMemoryWrites(
+    buf: string,
+    agentId: string,
+    rootPath: string,
+  ): Promise<void> {
+    const writes = extractMemoryWrites(buf);
+    for (const w of writes) {
+      try {
+        if (!isMemoryScope(w.scope) || !isMemoryFile(w.file) || !isMemoryOp(w.op)) {
+          await this.emit({
+            type: "error",
+            message: `memory-write: bad marker (scope=${w.scope}, file=${w.file}, op=${w.op})`,
+            agentId,
+            ts: now(),
+            seq: 0,
+          });
+          continue;
+        }
+        const ctx =
+          w.scope === "global"
+            ? ({ scope: "global" } as const)
+            : ({ scope: "project", rootPath } as const);
+        const res = await writeMemory(ctx, w.file, w.op, {
+          ...(w.content !== undefined ? { content: w.content } : {}),
+          ...(w.match !== undefined ? { match: w.match } : {}),
+        });
+        if (!res.ok) {
+          await this.emit({
+            type: "error",
+            message: `memory-write rejected (${res.error}) for ${w.scope}/${w.file}`,
+            agentId,
+            ts: now(),
+            seq: 0,
+          });
+          continue;
+        }
+        await this.emit({
+          type: "memory-write",
+          scope: w.scope,
+          file: w.file,
+          op: w.op,
+          lines: res.lines,
+          cap: res.cap,
+          agentId,
+          ts: now(),
+          seq: 0,
+        });
+      } catch (err) {
+        await this.emit({
+          type: "error",
+          message:
+            "memory-write failed: " +
+            (err instanceof Error ? err.message : String(err)),
+          agentId,
+          ts: now(),
+          seq: 0,
+        });
+      }
+    }
+  }
+
   private async applyWorkflowDirectives(
     rootPath: string,
     topicId: string,

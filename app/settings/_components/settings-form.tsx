@@ -44,6 +44,7 @@ import {
 import { PromptTemplatesEditor } from "./prompt-templates-editor";
 import { McpServersSection } from "./mcp-servers-section";
 import { OAuthProvidersSection } from "./oauth-providers-section";
+import { MemoryEditor } from "@/app/_components/memory/memory-editor";
 import { GeminiSection } from "./gemini-section";
 import { ImageSearchSection } from "./image-search-section";
 import { MapServicesSection } from "./map-services-section";
@@ -222,6 +223,15 @@ export function SettingsForm({ initialSettings, harnesses }: Props) {
           </Button>
         </CardContent>
       </Card>
+      <section>
+        <h2 className="text-lg font-semibold mb-3">Memory</h2>
+        <MemoryEditor
+          scope="global"
+          title="What Reflex remembers about you"
+          description="These files are loaded into every chat so the agent has context. Edit any line directly, or let the agent maintain them as you talk."
+          allowWipe
+        />
+      </section>
       <section>
         <h2 className="text-lg font-semibold mb-3">Interface &amp; content language</h2>
         <Card>

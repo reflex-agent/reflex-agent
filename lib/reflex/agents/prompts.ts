@@ -43,6 +43,7 @@ export async function chatSystemPrompt(scope: ChatScope): Promise<string> {
     widgetInstructions(),
     workflowInstructions(),
     imageGenInstructions(),
+    memoryInstructions(),
   ].join("\n\n");
 }
 
@@ -232,5 +233,71 @@ function dispatchInstructions(): string {
     "    – task is short text classification / extraction — `\"harness\":\"ollama\"` is cheap and fast.",
     "  - Without `harness`, the sub-agent inherits the orchestrator's runtime — usually fine. Override only when you have a concrete reason.",
     "  - Example: `<<reflex:dispatch>>{\"role\":\"coder\",\"harness\":\"codex\",\"brief\":\"Rewrite X in TypeScript strict mode\"}<</reflex:dispatch>>`",
+  ].join("\n");
+}
+
+/**
+ * Memory protocol — the agent decides when a fact is durable enough to
+ * persist into the user's or the project's memory files. Files live in
+ * Reflex itself; the user can audit + edit anything via Settings or the
+ * project dashboard. Never write speculation; quote the user's own words
+ * where it helps.
+ */
+function memoryInstructions(): string {
+  return [
+    "## Memory — durable facts you've learned",
+    "",
+    "Reflex keeps two small sets of markdown files — one global (about the user) and one per project. They're loaded into every system prompt under \"## About the user\" / \"## About this project\". When you spot a stable fact the user just stated, emit a `<<reflex:memory>>` marker so the next conversation already knows it. Don't ask permission first — emit and confirm in the reply.",
+    "",
+    "```",
+    `<<reflex:memory>>{`,
+    `  "scope": "global" | "project",`,
+    `  "file": "PERSONA" | "VALUES" | "INTERESTS" | "GOALS" | "RELATIONSHIPS" | "ROUTINES" | "AVOID" | "RECENT",`,
+    `  "op":   "append" | "replace" | "remove",`,
+    `  "content": "<single-line fact or block to add/replace>",`,
+    `  "match":   "<substring identifying a line to remove>"`,
+    `}<</reflex:memory>>`,
+    "```",
+    "",
+    "### Where each fact belongs",
+    "",
+    "- **PERSONA** — identity that doesn't change much: name, location, role, workplace, family, native language.",
+    "- **VALUES** — operating principles, how the user wants to be addressed (\"call me by first name\", \"be blunt, skip caveats\").",
+    "- **INTERESTS** — what the user is into right now: topics, hobbies, learning targets.",
+    "- **GOALS** — life/work goals (NOT per-task `/goal` — those live in topic state).",
+    "- **RELATIONSHIPS** — key people: `Name — role, last shared context`. One per line.",
+    "- **ROUTINES** — daily/weekly rhythms (wake time, work hours, gym days). Helps with scheduling.",
+    "- **AVOID** — explicit dislikes. The user said \"don't suggest X\" or \"never bring up Y\". Highest-leverage negative signal — LLMs cannot infer it.",
+    "- **RECENT** — never write here directly; the weekly rollup owns it.",
+    "",
+    "### Scope routing — \"would this still be true in another Space?\"",
+    "",
+    "- Yes → **global**. \"I live in Lisbon\", \"I'm vegetarian\", \"I'm a senior engineer at Acme\".",
+    "- No → **project**. \"This space is for my PhD thesis\", \"We ship Fridays\", \"Pair partner is Alex\".",
+    "",
+    "### Op choice",
+    "",
+    "- `append` for a new line. Default.",
+    "- `replace` when correcting / updating an existing fact (whole file is rewritten — include EVERY line you want to keep).",
+    "- `remove` to drop a single line — `match` is a substring; the first line containing it goes.",
+    "",
+    "### Rules",
+    "",
+    "- Never write speculation. If a fact is implied, ask via `<<reflex:question>>` first.",
+    "- One line per fact when appending. Compact, terse, third-person about the user.",
+    "- Don't echo the entire conversation. Memory is for facts that outlive this turn.",
+    "- If you're correcting earlier memory, prefer `replace` over `append` to avoid duplication.",
+    "- If a write hits a cap, Reflex auto-compacts the file before applying — don't worry about size.",
+    "- After emitting the marker, mention it briefly in the reply (\"Saved to PERSONA.\") so the user can spot it.",
+    "",
+    "### Example",
+    "",
+    "User: \"I'm an early riser — usually at the desk by 6:30am. Don't suggest evening calls.\"",
+    "You emit two markers in one turn:",
+    "",
+    `  <<reflex:memory>>{"scope":"global","file":"ROUTINES","op":"append","content":"Wakes early; typically at the desk by 6:30am."}<</reflex:memory>>`,
+    `  <<reflex:memory>>{"scope":"global","file":"AVOID","op":"append","content":"Evening calls / meetings — do not suggest."}<</reflex:memory>>`,
+    "",
+    "Then continue the conversation. Short confirmation in prose: \"Noted — early hours, no evenings.\"",
   ].join("\n");
 }
