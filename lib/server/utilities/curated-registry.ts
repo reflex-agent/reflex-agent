@@ -36,7 +36,7 @@ const INLINE_BASELINE: CuratedUtility[] = [
     category: "study",
     description:
       "Universal AI tutor. Say \"I want to learn X\" — it builds a course for your level: syllabus, articles, videos, diagrams, quizzes, homework, and interactive drills.",
-    github: "github:legostin/rflx-learn-anything@v0.5.1",
+    github: "github:legostin/rflx-learn-anything@v0.5.2",
     suggestedScope: "project",
     author: "reflex-org",
   },
