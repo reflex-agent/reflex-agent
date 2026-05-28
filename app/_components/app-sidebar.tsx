@@ -27,14 +27,18 @@ import type { RegistryEntry } from "@/lib/registry";
 import {
   loadKbSectionsAction,
   loadTopicsAction,
+  loadSidebarUtilitiesAction,
+  loadSidebarMemoryAction,
   type SidebarSection,
   type SidebarTopic,
+  type SidebarUtility,
+  type SidebarMemoryFile,
 } from "@/lib/server/sidebar-actions";
 import { listRootsAction } from "@/lib/server/registry-actions";
 import { listAgentsAction } from "@/lib/server/agents/actions";
 import type { AgentMeta } from "@/lib/server/agents/types";
 import { REFLEX_EVENTS, useReflexEvent } from "@/lib/client/events";
-import { Bot, Activity, Boxes, FileSearch } from "lucide-react";
+import { Bot, Activity, Boxes, FileSearch, Brain, Package } from "lucide-react";
 
 interface Props {
   initialRoots: RegistryEntry[];
@@ -164,13 +168,19 @@ function ProjectItem({
   const t = useTranslations("app");
   const [expanded, setExpanded] = useState(active);
   const [kbExpanded, setKbExpanded] = useState(false);
+  const [memoryExpanded, setMemoryExpanded] = useState(false);
   const [topicsExpanded, setTopicsExpanded] = useState(false);
+  const [utilitiesExpanded, setUtilitiesExpanded] = useState(false);
   const [agentsExpanded, setAgentsExpanded] = useState(false);
   const [sections, setSections] = useState<SidebarSection[] | null>(null);
+  const [memory, setMemory] = useState<SidebarMemoryFile[] | null>(null);
   const [topics, setTopics] = useState<SidebarTopic[] | null>(null);
+  const [utilities, setUtilities] = useState<SidebarUtility[] | null>(null);
   const [agents, setAgents] = useState<AgentMeta[] | null>(null);
   const [loadingKb, setLoadingKb] = useState(false);
+  const [loadingMemory, setLoadingMemory] = useState(false);
   const [loadingTopics, setLoadingTopics] = useState(false);
+  const [loadingUtilities, setLoadingUtilities] = useState(false);
   const [loadingAgents, setLoadingAgents] = useState(false);
   const pathname = usePathname();
 
@@ -202,6 +212,22 @@ function ProjectItem({
     else setAgents([]);
   }, [root.id]);
 
+  const fetchMemory = useCallback(async () => {
+    setLoadingMemory(true);
+    const res = await loadSidebarMemoryAction(root.id);
+    setLoadingMemory(false);
+    if (res.ok) setMemory(res.files);
+    else setMemory([]);
+  }, [root.id]);
+
+  const fetchUtilities = useCallback(async () => {
+    setLoadingUtilities(true);
+    const res = await loadSidebarUtilitiesAction(root.id);
+    setLoadingUtilities(false);
+    if (res.ok) setUtilities(res.utilities);
+    else setUtilities([]);
+  }, [root.id]);
+
   // Refetch on relevant events when the corresponding section is open.
   useReflexEvent(REFLEX_EVENTS.kbChanged(root.id), () => {
     if (kbExpanded) void fetchKb();
@@ -213,6 +239,9 @@ function ProjectItem({
     // Agents change in lock-step with topics.
     if (agentsExpanded) void fetchAgents();
     else setAgents(null);
+    // Utility helper threads also live in the topic store.
+    if (utilitiesExpanded) void fetchUtilities();
+    else setUtilities(null);
   });
 
   // Poll agents while expanded so live status changes show up. Cheap: it
@@ -230,10 +259,20 @@ function ProjectItem({
     setKbExpanded(next);
     if (next && sections === null && !loadingKb) await fetchKb();
   };
+  const toggleMemory = async () => {
+    const next = !memoryExpanded;
+    setMemoryExpanded(next);
+    if (next && memory === null && !loadingMemory) await fetchMemory();
+  };
   const toggleTopics = async () => {
     const next = !topicsExpanded;
     setTopicsExpanded(next);
     if (next && topics === null && !loadingTopics) await fetchTopics();
+  };
+  const toggleUtilities = async () => {
+    const next = !utilitiesExpanded;
+    setUtilitiesExpanded(next);
+    if (next && utilities === null && !loadingUtilities) await fetchUtilities();
   };
   const toggleAgents = async () => {
     const next = !agentsExpanded;
@@ -298,6 +337,27 @@ function ProjectItem({
           <li>
             <button
               type="button"
+              onClick={toggleMemory}
+              className="w-full flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              {memoryExpanded ? (
+                <ChevronDown className="h-3 w-3 shrink-0" />
+              ) : (
+                <ChevronRight className="h-3 w-3 shrink-0" />
+              )}
+              <Brain className="h-3 w-3 shrink-0" />
+              <span className="truncate">{t("sidebar.memory")}</span>
+              {loadingMemory && (
+                <Loader2 className="ml-auto h-3 w-3 animate-spin shrink-0" />
+              )}
+            </button>
+            {memoryExpanded && memory !== null && (
+              <MemoryList memory={memory} />
+            )}
+          </li>
+          <li>
+            <button
+              type="button"
               onClick={toggleTopics}
               className="w-full flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
             >
@@ -321,6 +381,36 @@ function ProjectItem({
               <TopicList
                 rootId={root.id}
                 topics={topics}
+                pathname={pathname}
+              />
+            )}
+          </li>
+          <li>
+            <button
+              type="button"
+              onClick={toggleUtilities}
+              className="w-full flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              {utilitiesExpanded ? (
+                <ChevronDown className="h-3 w-3 shrink-0" />
+              ) : (
+                <ChevronRight className="h-3 w-3 shrink-0" />
+              )}
+              <Boxes className="h-3 w-3 shrink-0" />
+              <span className="truncate">{t("sidebar.utilities")}</span>
+              {loadingUtilities && (
+                <Loader2 className="ml-auto h-3 w-3 animate-spin shrink-0" />
+              )}
+              {utilities !== null && !loadingUtilities && (
+                <span className="ml-auto text-[10px] text-muted-foreground">
+                  {utilities.length}
+                </span>
+              )}
+            </button>
+            {utilitiesExpanded && utilities !== null && (
+              <UtilityList
+                rootId={root.id}
+                utilities={utilities}
                 pathname={pathname}
               />
             )}
@@ -667,6 +757,139 @@ function TopicRow({
           )}
         </button>
       </Link>
+    </li>
+  );
+}
+
+function MemoryList({ memory }: { memory: SidebarMemoryFile[] }) {
+  const t = useTranslations("app");
+  const nonEmpty = memory.filter((m) => !m.empty);
+  if (nonEmpty.length === 0) {
+    return (
+      <div className="ml-4 px-3 py-1 text-[11px] italic text-muted-foreground">
+        {t("sidebar.memoryEmpty")}
+      </div>
+    );
+  }
+  return (
+    <ul className="ml-4 mt-0.5 space-y-0.5 border-l pl-1">
+      {nonEmpty.map((m) => (
+        <li key={m.file}>
+          <Link
+            href="/settings"
+            title={m.description}
+            className="flex items-center gap-1 px-2 py-1 text-[12px] rounded hover:bg-accent"
+          >
+            <Brain className="h-3 w-3 text-muted-foreground shrink-0" />
+            <span className="truncate flex-1 min-w-0">{m.file}</span>
+            <span className="text-[10px] text-muted-foreground shrink-0">
+              {m.lines}
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function UtilityList({
+  rootId,
+  utilities,
+  pathname,
+}: {
+  rootId: string;
+  utilities: SidebarUtility[];
+  pathname: string | null;
+}) {
+  const t = useTranslations("app");
+  if (utilities.length === 0) {
+    return (
+      <div className="ml-4 px-3 py-1 text-[11px] italic text-muted-foreground">
+        {t("sidebar.utilitiesEmpty")}
+      </div>
+    );
+  }
+  return (
+    <ul className="ml-4 mt-0.5 space-y-0.5 border-l pl-1">
+      {utilities.map((u) => (
+        <UtilityNode
+          key={`${u.scope}:${u.id}`}
+          rootId={rootId}
+          utility={u}
+          pathname={pathname}
+        />
+      ))}
+    </ul>
+  );
+}
+
+function UtilityNode({
+  rootId,
+  utility,
+  pathname,
+}: {
+  rootId: string;
+  utility: SidebarUtility;
+  pathname: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const href = `/utilities/${utility.scope}/${encodeURIComponent(utility.id)}${
+    utility.rootId ? `?rootId=${encodeURIComponent(utility.rootId)}` : ""
+  }`;
+  const hasThreads = utility.threads.length > 0;
+  return (
+    <li>
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          disabled={!hasThreads}
+          className="h-5 w-5 flex items-center justify-center text-muted-foreground hover:text-foreground shrink-0 disabled:opacity-30"
+        >
+          {hasThreads ? (
+            open ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )
+          ) : (
+            <span className="inline-block h-3 w-3" />
+          )}
+        </button>
+        <Link
+          href={href}
+          className="flex-1 min-w-0 flex items-center gap-1 px-1 py-1 text-[12px] rounded hover:bg-accent"
+        >
+          <Package className="h-3 w-3 text-muted-foreground shrink-0" />
+          <span className="truncate flex-1">{utility.name}</span>
+          {hasThreads && (
+            <span className="text-[10px] text-muted-foreground shrink-0">
+              {utility.threads.length}
+            </span>
+          )}
+        </Link>
+      </div>
+      {open && hasThreads && (
+        <ul className="ml-4 space-y-0.5 border-l pl-1">
+          {utility.threads.map((th) => {
+            const chatHref = `/roots/${rootId}/chat/${th.id}`;
+            const active = pathname === chatHref;
+            return (
+              <li key={th.id}>
+                <Link
+                  href={chatHref}
+                  className={`flex items-center gap-1 px-2 py-1 text-[12px] rounded hover:bg-accent ${
+                    active ? "bg-accent" : ""
+                  }`}
+                >
+                  <MessageSquare className="h-3 w-3 text-muted-foreground shrink-0" />
+                  <span className="truncate flex-1 min-w-0">{th.title}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </li>
   );
 }

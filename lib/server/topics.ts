@@ -119,6 +119,10 @@ export async function listTopics(root: string): Promise<TopicSummary[]> {
           ...(typeof meta.goalIterations === "number"
             ? { goalIterations: meta.goalIterations }
             : {}),
+          // Provenance flags — the sidebar uses these to route helper /
+          // task-bound topics out of the user-facing Conversations list.
+          ...(meta.helperFor ? { helperFor: meta.helperFor } : {}),
+          ...(meta.taskId ? { taskId: meta.taskId } : {}),
         },
         preview,
         abs,
