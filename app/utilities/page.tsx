@@ -8,6 +8,7 @@ import { Separator } from "@/components/ui/separator";
 import { listUtilities } from "@/lib/server/utilities/store";
 import { listRoots } from "@/lib/registry";
 import { InstallFromGithubButton } from "./_components/install-from-github-button";
+import { InstallFromArchiveButton } from "./_components/install-from-archive-button";
 import { InstallFromMcpButton } from "./_components/install-from-mcp-button";
 import { InstallViaAgentButton } from "./_components/install-via-agent-button";
 import { RemoveUtilityButton } from "./_components/remove-utility-button";
@@ -43,6 +44,7 @@ export default async function UtilitiesPage() {
         {advanced && (
           <div className="flex flex-wrap gap-2">
             <InstallFromGithubButton />
+            <InstallFromArchiveButton />
             <InstallFromMcpButton />
             <InstallViaAgentButton />
           </div>

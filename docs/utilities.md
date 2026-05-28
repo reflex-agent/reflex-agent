@@ -138,6 +138,60 @@ Consumers:
 - **System-prompt addendum** — `chatSystemPrompt()` concatenates all
   blocks before the agent's instruction.
 
+## Dependencies (esm.sh, bundled at build)
+
+A utility can use third-party npm packages by declaring them:
+
+```json
+"dependencies": { "dayjs": "1.11.10", "zod": "3.23.8" }
+```
+
+At **build time** esbuild resolves a bare import of a listed package to
+`https://esm.sh/<pkg>@<ver>` and inlines it into `bundle.js` (transitive
+deps too). Fetched bytes are cached under `<utility>/dist/.esm-cache/`,
+so rebuilds are offline + deterministic. **Nothing is fetched at
+runtime** — the iframe CSP stays `connect-src 'none'`.
+
+Rules:
+
+- A bare import NOT in `dependencies` (and not React/`@host/*`) is a
+  build error — `dependencies` is the allowlist the user reviews at
+  install.
+- Pin exact versions (ranges work but lose reproducibility).
+- React is shared with the host (`?external=react,...`) — no duplicate
+  copy.
+- Pure-JS/ESM packages only. node-native (binary) packages won't work in
+  action bundles.
+- No `npm install`, no per-utility `node_modules`, no postinstall
+  scripts — esm.sh serves pre-built ESM.
+
+## Server actions: auto-discovery
+
+You don't have to hand-list every action in `manifest.serverActions`.
+Any top-level `actions/<name>.ts` is auto-registered as an action named
+`<name>` at install (timeout 30s). Files whose basename starts with `_`
+(`_store.ts`, `_types.ts`) are treated as private helpers and skipped.
+Explicitly declared actions win (use that to set a custom `timeoutMs`).
+The expanded list is persisted into the stored `manifest.json`.
+
+## Multiple views (router)
+
+`@host/ui` ships a tiny in-memory router (the iframe has no address bar):
+
+```tsx
+import { RouterView, useReflexRoute } from "@host/ui";
+
+function Board({ navigate }) { return <button onClick={() => navigate("detail", { id: 7 })}>open</button>; }
+function Detail({ params, back }) { return <button onClick={back}>← {params.id}</button>; }
+
+export default function App() {
+  return <RouterView routes={{ board: Board, detail: Detail }} initial="board" />;
+}
+```
+
+Each view receives `{ params, navigate, back, replace, route, canBack }`.
+For manual control use `useReflexRoute(initial)` directly.
+
 ## Host API (the bridge)
 
 The utility iframe talks to the host through `postMessage` against a

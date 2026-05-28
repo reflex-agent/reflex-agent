@@ -9,8 +9,38 @@ import {
   type InstallSpec,
   type InstalledUtility,
   type Manifest,
+  type ServerAction,
   type UtilityScope,
 } from "./types";
+
+const DISCOVERED_ACTION_TIMEOUT_MS = 30_000;
+
+/**
+ * Merge hand-declared server actions with auto-discovered ones. A
+ * top-level `actions/<name>.ts` file becomes an action named `<name>`
+ * unless the basename starts with `_` (helper/private convention, e.g.
+ * `_store.ts`, `_types.ts`) or it's already declared. Explicit
+ * declarations are kept verbatim (custom timeoutMs survives).
+ */
+function mergeDiscoveredActions(
+  declared: ServerAction[],
+  relPaths: string[],
+): ServerAction[] {
+  const byName = new Map(declared.map((a) => [a.name, a]));
+  for (const rel of relPaths) {
+    const m = /^actions\/([^/_][^/]*)\.ts$/.exec(rel);
+    if (!m) continue; // nested, non-.ts, or `_`-prefixed → skip
+    const name = m[1]!;
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) continue;
+    if (byName.has(name)) continue; // explicit entry wins
+    byName.set(name, {
+      name,
+      entry: rel,
+      timeoutMs: DISCOVERED_ACTION_TIMEOUT_MS,
+    });
+  }
+  return [...byName.values()];
+}
 
 /**
  * On-disk store for utilities. Two scopes:
@@ -208,6 +238,16 @@ export async function installUtility(
   const manifestWithSource: Manifest = {
     ...spec.manifest,
     source: spec.source,
+    // Auto-discover server actions: any top-level `actions/<name>.ts`
+    // (excluding `_`-prefixed helper files) becomes an action without
+    // being hand-listed. Explicit manifest entries win (so authors can
+    // override timeoutMs). The expanded list is persisted to the stored
+    // manifest.json so every downstream reader (build, host-api dispatch,
+    // worker pool) keeps reading `serverActions` unchanged.
+    serverActions: mergeDiscoveredActions(
+      spec.manifest.serverActions,
+      Object.keys(spec.files),
+    ),
   };
   await fs.writeFile(
     path.join(dir, "manifest.json"),

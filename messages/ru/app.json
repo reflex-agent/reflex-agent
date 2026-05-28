@@ -91,6 +91,7 @@
       "getPreview": "Получить превью",
       "author": "Автор: {author}",
       "permissionsTitle": "Запрашиваемые разрешения",
+      "dependenciesTitle": "Зависимости в бандле (esm.sh)",
       "filesInRepo": "Файлы в репозитории ({count})",
       "installInto": "Куда установить",
       "globalOption": "Глобально (~/.reflex/utilities/)",

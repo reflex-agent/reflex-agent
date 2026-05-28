@@ -634,7 +634,7 @@ function buildEditGoalMessage(
     "4. Verify the new bundle builds without errors and the UI reflects the requested change.",
     "5. When done, emit `<<reflex:kb>>{\"kind\":\"goal-completion\",...}` and the phrase `GOAL ACHIEVED` on a separate line.",
     "",
-    "Do not invent imports outside the whitelist (`react`, `react-dom/client`, `react/jsx-runtime`, `@host/api`, `@host/ui`). If the request requires something impossible — ask via `<<reflex:question>>`.",
+    "Imports: `react`/`react-dom`, `@host/api`, `@host/ui`, plus any npm package you declare in `manifest.dependencies` (bundled from esm.sh at build). An undeclared bare import is a build error. If the request requires something impossible — ask via `<<reflex:question>>`.",
   ].join("\n");
 }
 

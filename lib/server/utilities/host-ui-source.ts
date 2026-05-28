@@ -6,7 +6,7 @@ import "server-only";
  * compiler in `build.ts` (which scans it for class candidates so utilities
  * receive a stylesheet covering the primitives' baked-in classes).
  */
-export const HOST_UI_SOURCE: string = String.raw`import { createElement, forwardRef } from "react";
+export const HOST_UI_SOURCE: string = String.raw`import { createElement, forwardRef, useState, useCallback } from "react";
 
 function cls(...parts) {
   return parts.filter(Boolean).join(" ");
@@ -118,5 +118,57 @@ export function ScrollArea({ className, children }) {
   return createElement("div", {
     className: cls("overflow-y-auto", className),
   }, children);
+}
+
+// --- Routing --------------------------------------------------------------
+// In-memory router for multi-view utilities. The iframe has no address
+// bar, so navigation is a state stack, not a URL. Use either the hook
+// (manual control) or <RouterView> (renders the active view component).
+
+export function useReflexRoute(initial) {
+  const start = typeof initial === "string"
+    ? { route: initial, params: {} }
+    : (initial && initial.route ? { route: initial.route, params: initial.params || {} } : { route: "", params: {} });
+  const [stack, setStack] = useState([start]);
+  const current = stack[stack.length - 1];
+  const navigate = useCallback((route, params) => {
+    setStack((s) => [...s, { route, params: params || {} }]);
+  }, []);
+  const back = useCallback(() => {
+    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+  }, []);
+  const replace = useCallback((route, params) => {
+    setStack((s) => [...s.slice(0, -1), { route, params: params || {} }]);
+  }, []);
+  return {
+    route: current.route,
+    params: current.params,
+    canBack: stack.length > 1,
+    navigate,
+    back,
+    replace,
+  };
+}
+
+// <RouterView routes={{ board: BoardView, detail: DetailView }} initial="board" />
+// Each view receives { params, navigate, back, replace, route, canBack }.
+export function RouterView({ routes, initial }) {
+  const r = useReflexRoute(initial);
+  const Comp = routes ? routes[r.route] : null;
+  if (typeof Comp !== "function") {
+    return createElement(
+      "div",
+      { className: "p-4 text-sm text-slate-500" },
+      "No view for route: " + String(r.route),
+    );
+  }
+  return createElement(Comp, {
+    params: r.params,
+    navigate: r.navigate,
+    back: r.back,
+    replace: r.replace,
+    route: r.route,
+    canBack: r.canBack,
+  });
 }
 `;

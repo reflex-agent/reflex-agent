@@ -91,6 +91,7 @@
       "getPreview": "Get preview",
       "author": "Author: {author}",
       "permissionsTitle": "Requested permissions",
+      "dependenciesTitle": "Bundled dependencies (esm.sh)",
       "filesInRepo": "Files in repo ({count})",
       "installInto": "Install into",
       "globalOption": "Global (~/.reflex/utilities/)",

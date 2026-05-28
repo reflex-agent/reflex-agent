@@ -3,9 +3,19 @@ import * as esbuild from "esbuild";
 import { existsSync, readFileSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { compile as compileTailwind } from "@tailwindcss/node";
 import { HOST_UI_SOURCE } from "./host-ui-source";
 import type { InstalledUtility, Manifest } from "./types";
+
+// The only CDN host utilities may pull build-time deps from. esm.sh
+// serves pre-built ESM (no install scripts) and supports ?external for
+// React dedup. Everything is fetched at BUILD time and inlined into the
+// bundle — nothing is loaded at runtime, so the iframe CSP stays
+// `connect-src 'none'`.
+const ESM_CDN_HOST = "esm.sh";
+const ESM_FETCH_TIMEOUT_MS = 20_000;
+const REACT_EXTERNAL = "react,react-dom,react-dom/client";
 
 /**
  * Bundle a utility's source into a browser-side `bundle.js` and (if it
@@ -72,6 +82,8 @@ export async function buildUtility(
   const { manifest, dir } = utility;
   const uiEntry = path.join(dir, manifest.ui);
   const uiOut = path.join(dir, "bundle.js");
+  const deps = manifest.dependencies ?? {};
+  const esmCacheDir = path.join(dir, "dist", ".esm-cache");
 
   await assertFileExists(uiEntry, "ui");
 
@@ -113,6 +125,7 @@ if (__root && typeof __Component === "function") {
     sourcemap: "inline",
     external: UI_EXTERNALS,
     plugins: [
+      esmCdnPlugin({ deps, cacheDir: esmCacheDir, target: "browser" }),
       importWhitelistPlugin([...UI_EXTERNALS, ...REACT_RESOLVABLE]),
     ],
     logLevel: "silent",
@@ -149,6 +162,7 @@ if (__root && typeof __Component === "function") {
         external: ACTION_EXTERNALS,
         plugins: [
           hostApiVirtualPlugin(),
+          esmCdnPlugin({ deps, cacheDir: esmCacheDir, target: "node" }),
           importWhitelistPlugin([...ACTION_EXTERNALS, "@host/api"]),
         ],
         logLevel: "silent",
@@ -398,6 +412,131 @@ function hostApiVirtualPlugin(): esbuild.Plugin {
       );
     },
   };
+}
+
+/**
+ * Resolve + bundle a utility's declared third-party deps from esm.sh at
+ * build time. Runs BEFORE the whitelist plugin so declared deps are
+ * claimed (and undeclared bare imports still fall through to the
+ * whitelist's hard error).
+ *
+ *   - utility source imports a declared dep (`dayjs` / `dayjs/plugin/x`)
+ *     → rewrite to `https://esm.sh/dayjs@<ver>/...?external=react,...`
+ *   - esm.sh modules import other `https://esm.sh/...` (transitive)
+ *     → fetched recursively, all inlined.
+ *   - esm.sh modules import bare `react`/`react-dom*` (kept external via
+ *     `?external`) → resolved to the host React so there's ONE React.
+ *
+ * Fetched bytes are cached under `<dir>/dist/.esm-cache/<sha>.js` so
+ * rebuilds are offline + deterministic.
+ */
+function esmCdnPlugin(args: {
+  deps: Record<string, string>;
+  cacheDir: string;
+  target: "browser" | "node";
+}): esbuild.Plugin {
+  const { deps, cacheDir, target } = args;
+  const reactSet = new Set(REACT_RESOLVABLE);
+
+  const depUrl = (spec: string): string | null => {
+    // spec is `pkg` or `pkg/sub` (or `@scope/pkg[/sub]`).
+    const parts = spec.split("/");
+    const pkg = spec.startsWith("@")
+      ? parts.slice(0, 2).join("/")
+      : parts[0]!;
+    const ver = deps[pkg];
+    if (!ver) return null;
+    const sub = spec.slice(pkg.length); // "" or "/sub"
+    const targetParam = target === "node" ? "&target=node" : "";
+    return `https://${ESM_CDN_HOST}/${pkg}@${ver}${sub}?external=${REACT_EXTERNAL}${targetParam}`;
+  };
+
+  return {
+    name: "reflex-esm-cdn",
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, (a) => {
+        // Absolute CDN URL (top-level or transitive) — only esm.sh.
+        if (/^https?:\/\//.test(a.path)) {
+          let host: string;
+          try {
+            host = new URL(a.path).host;
+          } catch {
+            return null;
+          }
+          if (host !== ESM_CDN_HOST) {
+            return {
+              errors: [
+                { text: `refusing non-esm.sh URL import: ${a.path}` },
+              ],
+            };
+          }
+          return { path: a.path, namespace: "esm-cdn" };
+        }
+        // Imports coming FROM a fetched CDN module.
+        if (a.namespace === "esm-cdn") {
+          // Relative → resolve against the importer URL.
+          if (a.path.startsWith(".") || a.path.startsWith("/")) {
+            const abs = new URL(a.path, a.importer).href;
+            return { path: abs, namespace: "esm-cdn" };
+          }
+          // Host React kept external by ?external — unify with host copy.
+          if (reactSet.has(a.path)) {
+            const resolved = reflexResolve(a.path);
+            if (resolved) return { path: resolved };
+          }
+          // Any other bare import the CDN left unresolved → route to esm.sh.
+          return {
+            path: `https://${ESM_CDN_HOST}/${a.path}?external=${REACT_EXTERNAL}${
+              target === "node" ? "&target=node" : ""
+            }`,
+            namespace: "esm-cdn",
+          };
+        }
+        // Utility source importing a declared dependency.
+        if (
+          !a.path.startsWith(".") &&
+          !a.path.startsWith("/") &&
+          !path.isAbsolute(a.path) &&
+          !a.path.startsWith("@host/") &&
+          !a.path.startsWith("node:")
+        ) {
+          const url = depUrl(a.path);
+          if (url) return { path: url, namespace: "esm-cdn" };
+        }
+        return null; // fall through to the whitelist plugin
+      });
+
+      build.onLoad({ filter: /.*/, namespace: "esm-cdn" }, async (a) => {
+        const contents = await fetchCached(a.path, cacheDir);
+        return { contents, loader: "js", resolveDir: cacheDir };
+      });
+    },
+  };
+}
+
+async function fetchCached(url: string, cacheDir: string): Promise<string> {
+  const hash = crypto.createHash("sha256").update(url).digest("hex").slice(0, 32);
+  const cacheFile = path.join(cacheDir, `${hash}.js`);
+  try {
+    return await fs.readFile(cacheFile, "utf8");
+  } catch {
+    /* miss — fetch below */
+  }
+  let res: Response;
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(ESM_FETCH_TIMEOUT_MS) });
+  } catch (err) {
+    throw new Error(
+      `couldn't fetch dependency from ${url}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!res.ok) {
+    throw new Error(`couldn't fetch dependency from ${url}: HTTP ${res.status}`);
+  }
+  const text = await res.text();
+  await fs.mkdir(cacheDir, { recursive: true });
+  await fs.writeFile(cacheFile, text, "utf8");
+  return text;
 }
 
 function importWhitelistPlugin(allowed: readonly string[]): esbuild.Plugin {

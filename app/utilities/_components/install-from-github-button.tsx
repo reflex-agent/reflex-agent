@@ -167,6 +167,28 @@ export function InstallFromGithubButton() {
               <PermissionsView permissions={preview.manifest.permissions} />
             </div>
 
+            {preview.manifest.dependencies &&
+              Object.keys(preview.manifest.dependencies).length > 0 && (
+                <div>
+                  <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">
+                    {t("utilities.github.dependenciesTitle")}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Object.entries(preview.manifest.dependencies).map(
+                      ([pkg, ver]) => (
+                        <Badge
+                          key={pkg}
+                          variant="outline"
+                          className="font-mono text-[10px]"
+                        >
+                          {pkg}@{ver}
+                        </Badge>
+                      ),
+                    )}
+                  </div>
+                </div>
+              )}
+
             <details className="text-xs">
               <summary className="cursor-pointer text-muted-foreground">
                 {t("utilities.github.filesInRepo", { count: Object.keys(preview.files).length })}

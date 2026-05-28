@@ -206,6 +206,29 @@ export const ManifestSchema = z.object({
   serverActions: z.array(ServerActionSchema).default([]),
   secrets: z.array(SecretDeclarationSchema).default([]),
   /**
+   * Third-party npm packages the utility imports. Key = package name,
+   * value = an exact version (pin — ranges work but lose
+   * reproducibility). At BUILD time esbuild resolves a bare import of a
+   * listed package to `https://esm.sh/<pkg>@<ver>` and inlines it into
+   * the bundle (cached on disk). Nothing is fetched at runtime — the
+   * iframe CSP stays `connect-src 'none'`. A bare import NOT listed here
+   * (and not React/host) is a build error, so this list is the
+   * dependency allowlist the user reviews at install. Pure-JS/ESM only;
+   * node-native packages won't work in action bundles.
+   */
+  dependencies: z
+    .record(
+      z
+        .string()
+        .regex(
+          /^(?:@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*$/i,
+          "must be an npm package name",
+        ),
+      z.string().min(1).max(64),
+    )
+    .refine((d) => Object.keys(d).length <= 30, "at most 30 dependencies")
+    .default({}),
+  /**
    * IDs of MCP servers (from the global registry at
    * `~/.reflex/mcp/servers.json`) this utility wants to call. Listed here
    * so the host can enforce per-utility access — `reflex.mcp.call({server,
