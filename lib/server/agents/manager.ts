@@ -22,6 +22,7 @@ import {
   extractMcpAdds,
   extractMemoryWrites,
   extractNotifies,
+  extractReports,
   extractRoutes,
   extractPermissions,
   extractQuestions,
@@ -1102,6 +1103,9 @@ class AgentManager {
       // Cross-Space dispatch is honoured only from the home/dispatcher chat.
       if (isHomeRoot(state.meta.rootId)) {
         await this.processRoutes(buf, agentId);
+      } else {
+        // A dispatched Space agent reports back to the dispatcher.
+        await this.processDispatchedReport(buf, state.rootPath, state.meta.topicId);
       }
       const utilityDirs = extractUtilityDirectives(buf);
       for (const u of utilityDirs) {
@@ -1582,9 +1586,12 @@ class AgentManager {
           const topic = await createTopic({
             root: target.path,
             firstMessage: prompt,
+            dispatchedFromDispatcher: true,
           });
           // Fire-and-forget — the dispatched agent streams into its own
-          // topic; we don't block the dispatcher waiting on it.
+          // topic; we don't block the dispatcher waiting on it. It reports
+          // progress back via <<reflex:report>> (and an auto-relay on
+          // turn-end), so completion / questions reach the user.
           void startOrchestratorTurn({
             rootId: target.id,
             topicId: topic.meta.id,
@@ -1609,6 +1616,50 @@ class AgentManager {
         });
       }
     }
+  }
+
+  /**
+   * Return leg of the dispatcher link. If this topic was spawned by the
+   * dispatcher, relay its turn back: explicit `<<reflex:report>>` markers
+   * if present, otherwise an auto-fallback with the turn's assistant text
+   * — so the user ALWAYS hears when a dispatched agent finishes (or asks
+   * something), even though they're watching the dispatcher / Telegram,
+   * not this Space.
+   */
+  private async processDispatchedReport(
+    buf: string,
+    rootPath: string,
+    topicId: string,
+  ): Promise<void> {
+    const { getTopic } = await import("@/lib/server/topics");
+    const topic = await getTopic(rootPath, topicId).catch(() => null);
+    if (!topic?.meta.dispatchedFromDispatcher) return;
+    const { relayToDispatcher, spaceNameFromPath } = await import(
+      "@/lib/server/home/relay"
+    );
+    const spaceName = spaceNameFromPath(rootPath);
+    const reports = extractReports(buf);
+    if (reports.length > 0) {
+      for (const r of reports) {
+        await relayToDispatcher({
+          spaceName,
+          body: r.body,
+          ...(r.status ? { status: r.status } : {}),
+        });
+      }
+      return;
+    }
+    // No explicit report — auto-relay the turn's assistant text so the
+    // completion never goes unheard. Strip markers; cap length.
+    const text = buf
+      .replace(/<{1,2}reflex:[a-z-]+>{1,2}[\s\S]*?<{1,2}\/reflex:[a-z-]+>{1,2}/g, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    await relayToDispatcher({
+      spaceName,
+      body: text ? text.slice(0, 1500) : "Finished.",
+      status: "done",
+    });
   }
 
   private async processSuggestions(

@@ -40,6 +40,14 @@ export interface TopicFrontmatter {
    * to render the "live status" line + "agent needs you" badge.
    */
   taskId?: string;
+  /**
+   * Set when the central dispatcher spawned this topic via
+   * `<<reflex:route>>{kind:"dispatch"}`. The agent here reports progress
+   * back to the dispatcher thread (and the user's channels) via
+   * `<<reflex:report>>`, and its turn-ends auto-relay so completion /
+   * questions always reach the user even outside this Space.
+   */
+  dispatchedFromDispatcher?: boolean;
 }
 
 export interface TopicMessage {
@@ -163,6 +171,11 @@ export async function getTopic(
       ...(typeof meta.goalIterations === "number"
         ? { goalIterations: meta.goalIterations }
         : {}),
+      ...(meta.helperFor ? { helperFor: meta.helperFor } : {}),
+      ...(meta.taskId ? { taskId: meta.taskId } : {}),
+      ...(meta.dispatchedFromDispatcher
+        ? { dispatchedFromDispatcher: true }
+        : {}),
     },
     messages: parseMessages(parsed.content),
     abs: file,
@@ -258,6 +271,7 @@ export interface CreateTopicArgs {
   language?: string;
   helperFor?: string;
   taskId?: string;
+  dispatchedFromDispatcher?: boolean;
 }
 
 export async function createTopic(args: CreateTopicArgs): Promise<Topic> {
@@ -274,6 +288,9 @@ export async function createTopic(args: CreateTopicArgs): Promise<Topic> {
     ...(args.language ? { language: args.language } : {}),
     ...(args.helperFor ? { helperFor: args.helperFor } : {}),
     ...(args.taskId ? { taskId: args.taskId } : {}),
+    ...(args.dispatchedFromDispatcher
+      ? { dispatchedFromDispatcher: true }
+      : {}),
   };
   // .md is metadata-only now; the conversation transcript lives in
   // <id>.events.jsonl and is the single source of truth for chat content.

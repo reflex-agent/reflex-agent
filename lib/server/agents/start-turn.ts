@@ -204,6 +204,10 @@ export async function startOrchestratorTurn(args: {
     findUtilityCommandPromptBlock(richCommand, extensions, language) ?? "",
     // Dispatcher mode — only in the home Space.
     await dispatcherInstructions(args.rootId, language),
+    // Dispatched-agent mode — when the dispatcher spawned this topic.
+    topic?.meta.dispatchedFromDispatcher
+      ? dispatchedAgentInstructions(language)
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -321,6 +325,29 @@ async function dispatcherInstructions(
     "- `space-create` registers a new Space (folder under ~/reflex-spaces unless you pass `path`).",
     "- `task` files a card on that Space's board. `dispatch` starts an agent working in that Space immediately.",
     "- Prefer routing over doing project work here — this thread coordinates; the Spaces do the work. Confirm what you routed in one line.",
+  ].join("\n");
+}
+
+/**
+ * Injected when the dispatcher spawned this topic. The user isn't
+ * watching this Space — they're in the dispatcher chat / Telegram — so
+ * the agent must report back.
+ */
+function dispatchedAgentInstructions(language: string): string {
+  return [
+    "## You were dispatched here by the dispatcher",
+    "",
+    `Reply in ${language}. The user who asked for this is NOT watching this Space — they're in the central dispatcher chat (and Telegram). Keep them in the loop by reporting back:`,
+    "",
+    "```",
+    `<<reflex:report>>{"status":"done","body":"one-line summary of what you did / the result"}<</reflex:report>>`,
+    `<<reflex:report>>{"status":"question","body":"the exact question or blocker you need them to resolve"}<</reflex:report>>`,
+    "```",
+    "",
+    "- ALWAYS emit a `done` report when you finish the task — with the outcome, not just \"done\".",
+    "- The moment you're blocked or need a decision, emit a `question` report instead of stalling.",
+    "- `update` status is fine for a meaningful mid-way checkpoint on a long task. Don't spam.",
+    "- Do the actual work in this Space as usual; the report is how the result travels back to the user.",
   ].join("\n");
 }
 

@@ -48,6 +48,8 @@ export const NOTIFY_OPEN = "<<reflex:notify>>";
 export const NOTIFY_CLOSE = "<</reflex:notify>>";
 export const ROUTE_OPEN = "<<reflex:route>>";
 export const ROUTE_CLOSE = "<</reflex:route>>";
+export const REPORT_OPEN = "<<reflex:report>>";
+export const REPORT_CLOSE = "<</reflex:report>>";
 export const TASK_CREATE_OPEN = "<<reflex:task-create>>";
 export const TASK_CREATE_CLOSE = "<</reflex:task-create>>";
 export const TASK_UPDATE_OPEN = "<<reflex:task-update>>";
@@ -228,6 +230,23 @@ export function extractRoutes(text: string): RouteDirective[] {
     (e): e is RouteDirective =>
       !!e &&
       (e.kind === "space-create" || e.kind === "task" || e.kind === "dispatch"),
+  );
+}
+
+/**
+ * Report back to the dispatcher — used by an agent that was dispatched
+ * INTO a Space. Relayed to the central dispatcher thread + pushed to the
+ * user's channels (Telegram). The agent emits one when it finishes, or
+ * when it's blocked / needs the user.
+ */
+export interface ReportDirective {
+  body: string;
+  status?: "done" | "question" | "update" | "blocked";
+}
+
+export function extractReports(text: string): ReportDirective[] {
+  return extractAll<ReportDirective>(text, REPORT_OPEN, REPORT_CLOSE).filter(
+    (e): e is ReportDirective => !!e && typeof e.body === "string" && !!e.body,
   );
 }
 
