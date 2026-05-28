@@ -35,7 +35,10 @@
     "build:cli": "tsc -p tsconfig.cli.json",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.cli.json --noEmit",
     "prepack": "node -e \"require('fs').rmSync('.next/cache', { recursive: true, force: true })\"",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "pnpm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint:boundaries": "node scripts/check-boundaries.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -84,6 +87,7 @@
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "typescript": "^6"
+    "typescript": "^6",
+    "vitest": "^4.1.7"
   }
 }

@@ -30,6 +30,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Import-boundary check
+        run: pnpm run lint:boundaries
+
+      - name: Test
+        run: pnpm test
+
       - name: Typecheck
         run: pnpm run typecheck
 
