@@ -121,10 +121,147 @@ async function editPlain(
   });
 }
 
+interface InlineButton {
+  text: string;
+  data: string;
+}
+
+/** Send a plain message with an inline keyboard (rows of buttons). */
+async function sendKeyboard(
+  token: string,
+  chatId: string,
+  text: string,
+  rows: InlineButton[][],
+): Promise<number | null> {
+  const r = await tgCall(token, "sendMessage", {
+    chat_id: chatId,
+    text: text.slice(0, TG_MAX),
+    disable_web_page_preview: true,
+    reply_markup: {
+      inline_keyboard: rows.map((row) =>
+        row.map((b) => ({ text: b.text, callback_data: b.data })),
+      ),
+    },
+  });
+  return r.ok && r.result?.message_id ? r.result.message_id : null;
+}
+
+/** Replace a message's text and drop its keyboard (post-answer). */
+async function resolveKeyboardMessage(
+  token: string,
+  chatId: string,
+  messageId: number,
+  text: string,
+): Promise<void> {
+  await tgCall(token, "editMessageText", {
+    chat_id: chatId,
+    message_id: messageId,
+    text: text.slice(0, TG_MAX),
+    disable_web_page_preview: true,
+  });
+}
+
+/** Prompt the user to reply (force_reply) — used for open answers / secrets. */
+async function forceReply(
+  token: string,
+  chatId: string,
+  text: string,
+): Promise<number | null> {
+  const r = await tgCall(token, "sendMessage", {
+    chat_id: chatId,
+    text: text.slice(0, TG_MAX),
+    reply_markup: { force_reply: true },
+  });
+  return r.ok && r.result?.message_id ? r.result.message_id : null;
+}
+
+async function answerCallback(token: string, callbackId: string): Promise<void> {
+  await tgCall(token, "answerCallbackQuery", { callback_query_id: callbackId });
+}
+
+async function deleteMessage(
+  token: string,
+  chatId: string,
+  messageId: number,
+): Promise<void> {
+  await tgCall(token, "deleteMessage", {
+    chat_id: chatId,
+    message_id: messageId,
+  });
+}
+
 /** Markdown-v1 escape for the few chars that break Telegram parsing. */
 function escapeMd(s: string): string {
   return s.replace(/([*_`\[])/g, "\\$1");
 }
+
+// ---------------------------------------------------------------------------
+// Interactive state (in-memory)
+
+// Per-topic serialized turn queue — keeps the poll loop non-blocking so a
+// callback_query (button tap) can be received WHILE a turn streams.
+const topicQueues = new Map<string, Promise<void>>();
+
+function enqueueTurn(topicId: string, fn: () => Promise<void>): void {
+  const prev = topicQueues.get(topicId) ?? Promise.resolve();
+  const next = prev
+    .then(fn)
+    .catch((err) =>
+      console.error(
+        "[telegram] turn:",
+        err instanceof Error ? err.message : err,
+      ),
+    );
+  topicQueues.set(topicId, next);
+}
+
+// One streaming watcher per topic — tracks which interactions it already
+// surfaced so it doesn't re-send a keyboard for the same request.
+interface Watcher {
+  presented: Set<string>;
+}
+const watchers = new Map<string, Watcher>();
+
+// callback_data is capped at 64 bytes, so buttons carry a short id that
+// maps back to the full interaction here.
+interface RegEntry {
+  agentId: string;
+  topicId: string;
+  rootPath: string;
+  chatId: string;
+  requestId: string;
+  kind: "permission" | "question" | "mcp-add";
+  /** permission decision / question answer carried by the button. */
+  value?: string;
+  scope?: "once" | "always";
+}
+const registry = new Map<string, RegEntry>();
+let cbCounter = 0;
+
+function register(entry: RegEntry): string {
+  const id = `i${cbCounter++}`;
+  registry.set(id, entry);
+  return id;
+}
+
+// Awaiting a force_reply (open answer or a secret value), keyed by chatId.
+interface PendingReply {
+  agentId: string;
+  topicId: string;
+  rootPath: string;
+  chatId: string;
+  kind: "answer" | "secret";
+  requestId: string;
+  /** secret: env key currently being collected. */
+  secretKey?: string;
+  /** secret: remaining keys to collect after this one. */
+  remaining?: string[];
+  /** secret: values gathered so far. */
+  collected?: Record<string, string>;
+  /** message_id of the prompt, deleted with the reply for secrets. */
+  promptMsgId?: number;
+}
+const pendingReplies = new Map<string, PendingReply>();
 
 // ---------------------------------------------------------------------------
 // Inbound poller (singleton)
@@ -172,18 +309,12 @@ async function loop(handle: PollerHandle): Promise<void> {
     try {
       const updates = await getUpdates(cfg.botToken, offset);
       for (const u of updates) {
-        // Process FIRST, then advance the offset. If the process dies
-        // mid-turn (restart/crash), the message stays unacked and gets
-        // redelivered — otherwise it'd be silently lost. The catch still
-        // advances on a handler error so a poison message can't loop.
-        await handleUpdate(cfg, u).catch((err) => {
-          console.error(
-            "[telegram] handleUpdate:",
-            err instanceof Error ? err.message : err,
-          );
-        });
         offset = u.update_id + 1;
         await writeOffset(offset);
+        // Dispatch WITHOUT awaiting — turns run on a per-topic queue,
+        // callbacks resolve inline. The poll loop must stay free to fetch
+        // the next callback_query while a turn is still streaming.
+        dispatchUpdate(cfg, u);
       }
     } catch (err) {
       console.error(
@@ -196,18 +327,49 @@ async function loop(handle: PollerHandle): Promise<void> {
   handle.running = false;
 }
 
+interface TgMessage {
+  message_id?: number;
+  text?: string;
+  caption?: string;
+  photo?: Array<{ file_id: string; file_size?: number }>;
+  chat?: { id: number };
+  reply_to_message?: { message_id?: number };
+}
+
+interface TgCallbackQuery {
+  id: string;
+  data?: string;
+  message?: { chat?: { id: number }; message_id?: number };
+}
+
 interface TgUpdate {
   update_id: number;
-  message?: {
-    text?: string;
-    caption?: string;
-    photo?: Array<{ file_id: string; file_size?: number }>;
-    chat?: { id: number };
-  };
+  message?: TgMessage;
+  callback_query?: TgCallbackQuery;
+}
+
+function dispatchUpdate(cfg: TelegramConfig, u: TgUpdate): void {
+  if (u.callback_query) {
+    void handleCallback(cfg, u.callback_query).catch((err) =>
+      console.error(
+        "[telegram] callback:",
+        err instanceof Error ? err.message : err,
+      ),
+    );
+    return;
+  }
+  if (u.message?.chat) {
+    void handleMessage(cfg, u.message).catch((err) =>
+      console.error(
+        "[telegram] message:",
+        err instanceof Error ? err.message : err,
+      ),
+    );
+  }
 }
 
 async function getUpdates(token: string, offset: number): Promise<TgUpdate[]> {
-  const url = `${api(token, "getUpdates")}?timeout=${POLL_TIMEOUT_S}&offset=${offset}&allowed_updates=["message"]`;
+  const url = `${api(token, "getUpdates")}?timeout=${POLL_TIMEOUT_S}&offset=${offset}&allowed_updates=${encodeURIComponent('["message","callback_query"]')}`;
   const res = await fetch(url, {
     signal: AbortSignal.timeout((POLL_TIMEOUT_S + 10) * 1000),
   });
@@ -216,20 +378,14 @@ async function getUpdates(token: string, offset: number): Promise<TgUpdate[]> {
   return body.result ?? [];
 }
 
-async function handleUpdate(cfg: TelegramConfig, u: TgUpdate): Promise<void> {
-  const chatId = u.message?.chat?.id;
+async function handleMessage(cfg: TelegramConfig, msg: TgMessage): Promise<void> {
+  const chatId = msg.chat?.id;
   if (chatId === undefined) return;
-  const photos = u.message?.photo ?? [];
-  // Caption rides with photos; plain text otherwise. A bare photo gets a
-  // default prompt so the agent has something to answer.
-  let text = (u.message?.text ?? u.message?.caption ?? "").trim();
-  if (!text && photos.length === 0) return;
-  if (!text && photos.length > 0) text = "What's in this image?";
+  const photos = msg.photo ?? [];
+  let text = (msg.text ?? msg.caption ?? "").trim();
 
   let allowedChatId = cfg.chatId;
-  // First-message auto-bind: if no chat id is configured yet, adopt the
-  // sender's — the user just texts the bot once and it's connected, no
-  // copy-pasting an id. Persisted so later messages match normally.
+  // First-message auto-bind (unchanged): connect on first text.
   if (!allowedChatId) {
     allowedChatId = String(chatId);
     try {
@@ -243,7 +399,7 @@ async function handleUpdate(cfg: TelegramConfig, u: TgUpdate): Promise<void> {
         },
       });
     } catch {
-      /* best-effort — still proceed with this message */
+      /* best-effort */
     }
     await sendMessage(
       cfg.botToken,
@@ -251,16 +407,22 @@ async function handleUpdate(cfg: TelegramConfig, u: TgUpdate): Promise<void> {
       "Connected ✅ — I'll answer here from now on.",
     );
   }
-  // Only accept messages from the (now) configured chat.
   if (String(chatId) !== String(allowedChatId)) return;
 
-  // Telegram and the web home page are the SAME conversation — both talk
-  // to the central dispatcher thread in the synthetic home Space.
+  // If we're waiting on a force_reply (open answer / secret), this message
+  // is that reply — route it instead of starting a new turn.
+  const waiting = pendingReplies.get(allowedChatId);
+  if (waiting && text) {
+    await handleReplyInput(cfg, allowedChatId, waiting, text, msg.message_id);
+    return;
+  }
+
+  if (!text && photos.length === 0) return;
+  if (!text && photos.length > 0) text = "What's in this image?";
+
   const { getDispatcherTopic } = await import("@/lib/server/home/dispatcher");
   const d = await getDispatcherTopic();
 
-  // Download the largest photo (last in the array) so the agent can see
-  // it via its Read tool (native vision on both Claude Code and Codex).
   const attachments: Attachment[] = [];
   if (photos.length > 0) {
     const largest = photos[photos.length - 1]!;
@@ -272,15 +434,212 @@ async function handleUpdate(cfg: TelegramConfig, u: TgUpdate): Promise<void> {
     if (att) attachments.push(att);
   }
 
-  await streamTurnToTelegram(
-    cfg.botToken,
-    allowedChatId,
-    d.rootId,
-    d.rootPath,
-    d.topicId,
-    text,
-    attachments,
+  // Serialize per topic so two messages don't spawn two streamers.
+  enqueueTurn(d.topicId, () =>
+    runTurn(
+      cfg.botToken,
+      allowedChatId,
+      d.rootId,
+      d.rootPath,
+      d.topicId,
+      text,
+      attachments,
+    ),
   );
+}
+
+/** A tapped inline button — resolve the matching interaction. */
+async function handleCallback(
+  cfg: TelegramConfig,
+  cq: TgCallbackQuery,
+): Promise<void> {
+  await answerCallback(cfg.botToken, cq.id);
+  const chatId = cq.message?.chat?.id;
+  const entry = cq.data ? registry.get(cq.data) : undefined;
+  if (!entry || chatId === undefined) {
+    if (chatId !== undefined && cq.message?.message_id) {
+      await resolveKeyboardMessage(
+        cfg.botToken,
+        String(chatId),
+        cq.message.message_id,
+        "↻ This prompt expired (restart). Ask again.",
+      );
+    }
+    return;
+  }
+  registry.delete(cq.data!);
+  const msgId = cq.message?.message_id;
+  try {
+    if (entry.kind === "permission") {
+      const decision = entry.value === "deny" ? "deny" : "allow";
+      await agentManager.respondPermission(entry.agentId, {
+        requestId: entry.requestId,
+        decision,
+        ...(entry.scope ? { scope: entry.scope } : {}),
+      });
+      if (msgId) {
+        const label =
+          decision === "deny"
+            ? "❌ Denied"
+            : entry.scope === "always"
+              ? "✅ Allowed (always)"
+              : "✅ Allowed once";
+        await resolveKeyboardMessage(cfg.botToken, String(chatId), msgId, label);
+      }
+    } else if (entry.kind === "question") {
+      await agentManager.respondQuestion(entry.agentId, {
+        questionId: entry.requestId,
+        answer: entry.value ?? "",
+      });
+      if (msgId) {
+        await resolveKeyboardMessage(
+          cfg.botToken,
+          String(chatId),
+          msgId,
+          `✅ ${entry.value ?? ""}`,
+        );
+      }
+    } else if (entry.kind === "mcp-add") {
+      if (entry.value === "reject") {
+        await agentManager.respondMcpAdd(entry.agentId, {
+          requestId: entry.requestId,
+          decision: "reject",
+        });
+        if (msgId) {
+          await resolveKeyboardMessage(
+            cfg.botToken,
+            String(chatId),
+            msgId,
+            "❌ Skipped",
+          );
+        }
+      } else {
+        // approve — collect required secrets via force_reply, else connect now.
+        if (msgId) {
+          await resolveKeyboardMessage(
+            cfg.botToken,
+            String(chatId),
+            msgId,
+            "🔐 Connecting…",
+          );
+        }
+        await beginSecretCollection(cfg, entry);
+      }
+    }
+  } catch (err) {
+    if (msgId) {
+      await resolveKeyboardMessage(
+        cfg.botToken,
+        String(chatId),
+        msgId,
+        `⚠️ ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+}
+
+/** Route a force_reply: an open question answer or a secret value. */
+async function handleReplyInput(
+  cfg: TelegramConfig,
+  chatId: string,
+  waiting: PendingReply,
+  text: string,
+  replyMsgId?: number,
+): Promise<void> {
+  pendingReplies.delete(chatId);
+  if (waiting.kind === "answer") {
+    await agentManager
+      .respondQuestion(waiting.agentId, {
+        questionId: waiting.requestId,
+        answer: text,
+      })
+      .catch((err) => console.error("[telegram] respondQuestion:", err));
+    return;
+  }
+
+  // Secret value — record it, then scrub both the value and the prompt
+  // from the chat so the secret doesn't linger in Telegram.
+  const collected = { ...(waiting.collected ?? {}) };
+  if (waiting.secretKey) collected[waiting.secretKey] = text;
+  if (replyMsgId) await deleteMessage(cfg.botToken, chatId, replyMsgId);
+  if (waiting.promptMsgId)
+    await deleteMessage(cfg.botToken, chatId, waiting.promptMsgId);
+
+  const remaining = waiting.remaining ?? [];
+  if (remaining.length > 0) {
+    const [next, ...rest] = remaining;
+    const promptMsgId = await forceReply(
+      cfg.botToken,
+      chatId,
+      `Paste value for \`${next}\``,
+    );
+    pendingReplies.set(chatId, {
+      ...waiting,
+      secretKey: next,
+      remaining: rest,
+      collected,
+      ...(promptMsgId ? { promptMsgId } : { promptMsgId: undefined }),
+    });
+    return;
+  }
+
+  // All collected → approve the mcp-add with the secret values.
+  await agentManager
+    .respondMcpAdd(waiting.agentId, {
+      requestId: waiting.requestId,
+      decision: "approve",
+      secretValues: collected,
+    })
+    .catch((err) => console.error("[telegram] respondMcpAdd:", err));
+  await sendMessage(cfg.botToken, chatId, "✅ Connected.");
+}
+
+/**
+ * Begin (or skip) secret collection for an approved mcp-add. Reads the
+ * request's declared secret slots; prompts the first via force_reply, or
+ * connects immediately when none are required.
+ */
+async function beginSecretCollection(
+  cfg: TelegramConfig,
+  entry: RegEntry,
+): Promise<void> {
+  const events = await readEvents(entry.rootPath, entry.topicId);
+  const req = events.find(
+    (e): e is Extract<typeof events[number], { type: "mcp-add-request" }> =>
+      e.type === "mcp-add-request" && e.requestId === entry.requestId,
+  );
+  const keys = (req?.secrets ?? [])
+    .filter((s) => s.required !== false)
+    .map((s) => s.envKey);
+  if (keys.length === 0) {
+    await agentManager
+      .respondMcpAdd(entry.agentId, {
+        requestId: entry.requestId,
+        decision: "approve",
+        secretValues: {},
+      })
+      .catch((err) => console.error("[telegram] respondMcpAdd:", err));
+    await sendMessage(cfg.botToken, entry.chatId, "✅ Connected.");
+    return;
+  }
+  const [first, ...rest] = keys;
+  const promptMsgId = await forceReply(
+    cfg.botToken,
+    entry.chatId,
+    `Paste value for \`${first}\` (it'll be deleted from the chat right after).`,
+  );
+  pendingReplies.set(entry.chatId, {
+    agentId: entry.agentId,
+    topicId: entry.topicId,
+    rootPath: entry.rootPath,
+    chatId: entry.chatId,
+    kind: "secret",
+    requestId: entry.requestId,
+    secretKey: first,
+    remaining: rest,
+    collected: {},
+    ...(promptMsgId ? { promptMsgId } : {}),
+  });
 }
 
 async function downloadTelegramPhoto(
@@ -312,15 +671,19 @@ async function downloadTelegramPhoto(
 }
 
 const EDIT_THROTTLE_MS = 1500;
+// Generous cap — a turn that pauses on a permission/question waits here
+// for the user's tap. Normal turns break as soon as the agent idles.
+const INTERACTIVE_TIMEOUT_MS = 15 * 60_000;
 
 /**
- * Run a turn and stream the assistant text into Telegram by editing a
- * single placeholder message as the reply grows — Telegram's stand-in
- * for token streaming. Throttled to one edit per ~1.5s (API limits), and
- * only when the text actually changed. On completion the message is
- * finalized; overflow past Telegram's 4k cap spills into extra messages.
+ * Run a turn and stream it into Telegram. Edits a placeholder message as
+ * the assistant text grows (Telegram's stand-in for token streaming) AND
+ * surfaces any interaction the agent raises (question / permission /
+ * mcp-add) as inline keyboards — so the turn can pause for the user and
+ * resume after a tap, all in one thread. One runTurn per topic at a time
+ * (serialized by the topic queue).
  */
-async function streamTurnToTelegram(
+async function runTurn(
   token: string,
   chatId: string,
   rootId: string,
@@ -336,6 +699,8 @@ async function streamTurnToTelegram(
     return;
   }
 
+  const watcher: Watcher = { presented: new Set() };
+  watchers.set(topicId, watcher);
   const messageId = await sendPlain(token, chatId, "💭…");
   const collect = async (): Promise<string> => {
     const events = await readEvents(rootPath, topicId);
@@ -350,40 +715,228 @@ async function streamTurnToTelegram(
     return stripMarkers(text);
   };
 
-  const deadline = Date.now() + TURN_TIMEOUT_MS;
+  const deadline = Date.now() + INTERACTIVE_TIMEOUT_MS;
   let lastShown = "";
   let lastEditAt = 0;
   await sleep(400);
-  while (Date.now() < deadline) {
-    const active = agentManager.isActive(topicId);
-    const cur = await collect();
-    const head = cur.slice(0, TG_MAX);
-    if (
-      messageId &&
-      head &&
-      head !== lastShown &&
-      Date.now() - lastEditAt >= EDIT_THROTTLE_MS
-    ) {
-      await editPlain(token, chatId, messageId, head);
-      lastShown = head;
-      lastEditAt = Date.now();
+  try {
+    while (Date.now() < deadline) {
+      const cur = await collect();
+      const head = cur.slice(0, TG_MAX);
+      if (
+        messageId &&
+        head &&
+        head !== lastShown &&
+        Date.now() - lastEditAt >= EDIT_THROTTLE_MS
+      ) {
+        await editPlain(token, chatId, messageId, head);
+        lastShown = head;
+        lastEditAt = Date.now();
+      }
+      const open = await presentInteractions(
+        token,
+        chatId,
+        rootPath,
+        topicId,
+        watcher,
+      );
+      const active = agentManager.isActive(topicId);
+      // Keep watching while the agent runs OR an interaction is still
+      // waiting for the user. Otherwise the turn is done.
+      if (!active && !open) break;
+      await sleep(700);
     }
-    if (!active) break;
-    await sleep(600);
-  }
-  await sleep(400); // flush trailing deltas
+    await sleep(300); // flush trailing deltas
 
-  const finalText = (await collect()) || "(no reply)";
-  const head = finalText.slice(0, TG_MAX);
-  if (messageId) {
-    if (head !== lastShown) await editPlain(token, chatId, messageId, head);
-  } else {
-    await sendMessage(token, chatId, head);
+    const finalText = await collect();
+    const head = finalText.slice(0, TG_MAX);
+    if (messageId) {
+      if (head && head !== lastShown) {
+        await editPlain(token, chatId, messageId, head);
+      } else if (!head) {
+        // No assistant prose (e.g. the turn was only an interaction) —
+        // drop the placeholder so it isn't left as "💭…".
+        await deleteMessage(token, chatId, messageId);
+      }
+    } else if (head) {
+      await sendMessage(token, chatId, head);
+    }
+    for (let i = TG_MAX; i < finalText.length; i += TG_MAX) {
+      await sendMessage(token, chatId, finalText.slice(i, i + TG_MAX));
+    }
+  } finally {
+    watchers.delete(topicId);
   }
-  // Overflow beyond the 4k cap → continuation messages.
-  for (let i = TG_MAX; i < finalText.length; i += TG_MAX) {
-    await sendMessage(token, chatId, finalText.slice(i, i + TG_MAX));
+}
+
+interface OpenInteraction {
+  kind: "permission" | "question" | "mcp-add";
+  requestId: string;
+  tool?: string;
+  description?: string;
+  prompt?: string;
+  choices?: string[];
+  options?: Array<{ label: string }>;
+  label?: string;
+  secrets?: Array<{ envKey: string; label: string; required?: boolean }>;
+}
+
+/**
+ * Surface any not-yet-presented open interaction as a keyboard / prompt.
+ * Returns true if there is at least one OPEN interaction (so the turn
+ * loop knows to keep waiting for the user).
+ */
+async function presentInteractions(
+  token: string,
+  chatId: string,
+  rootPath: string,
+  topicId: string,
+  watcher: Watcher,
+): Promise<boolean> {
+  const open = openInteractions(await readEvents(rootPath, topicId));
+  if (open.length === 0) return false;
+  const agentId = agentIdForTopic(topicId);
+  for (const it of open) {
+    if (watcher.presented.has(it.requestId) || !agentId) continue;
+    watcher.presented.add(it.requestId);
+    if (it.kind === "permission") {
+      const base = {
+        agentId,
+        topicId,
+        rootPath,
+        chatId,
+        requestId: it.requestId,
+        kind: "permission" as const,
+      };
+      const rows: InlineButton[][] = [
+        [
+          { text: "✅ Allow once", data: register({ ...base, value: "allow", scope: "once" }) },
+          { text: "✅ Always", data: register({ ...base, value: "allow", scope: "always" }) },
+        ],
+        [{ text: "❌ Deny", data: register({ ...base, value: "deny" }) }],
+      ];
+      const title = it.tool ? `🔐 Allow \`${it.tool}\`?` : "🔐 Permission?";
+      await sendKeyboard(
+        token,
+        chatId,
+        it.description ? `${title}\n${it.description}` : title,
+        rows,
+      );
+    } else if (it.kind === "question") {
+      const labels = (it.options?.map((o) => o.label) ?? it.choices ?? []).filter(
+        Boolean,
+      );
+      const head = `❓ ${it.prompt ?? "Question"}`;
+      if (labels.length > 0) {
+        const rows: InlineButton[][] = labels
+          .slice(0, 8)
+          .map((l) => [
+            {
+              text: l.slice(0, 60),
+              data: register({
+                agentId,
+                topicId,
+                rootPath,
+                chatId,
+                requestId: it.requestId,
+                kind: "question",
+                value: l,
+              }),
+            },
+          ]);
+        await sendKeyboard(token, chatId, head, rows);
+      } else {
+        const promptMsgId = await forceReply(token, chatId, head);
+        pendingReplies.set(chatId, {
+          agentId,
+          topicId,
+          rootPath,
+          chatId,
+          kind: "answer",
+          requestId: it.requestId,
+          ...(promptMsgId ? { promptMsgId } : {}),
+        });
+      }
+    } else if (it.kind === "mcp-add") {
+      const base = {
+        agentId,
+        topicId,
+        rootPath,
+        chatId,
+        requestId: it.requestId,
+        kind: "mcp-add" as const,
+      };
+      const need = (it.secrets ?? []).filter((s) => s.required !== false);
+      const rows: InlineButton[][] = [];
+      if (need.length > 0) {
+        rows.push([
+          { text: "🔐 Enter secrets", data: register({ ...base, value: "approve" }) },
+        ]);
+      } else {
+        rows.push([
+          { text: "✅ Connect", data: register({ ...base, value: "approve" }) },
+        ]);
+      }
+      rows.push([{ text: "Skip", data: register({ ...base, value: "reject" }) }]);
+      const slots = need.length
+        ? `\nSecrets: ${need.map((s) => s.envKey).join(", ")}`
+        : "";
+      await sendKeyboard(
+        token,
+        chatId,
+        `🔐 Connect ${it.label ?? "a service"}?${slots}`,
+        rows,
+      );
+    }
   }
+  return true;
+}
+
+/** Scan events for still-open interactions, with full payloads. */
+function openInteractions(
+  events: import("@/lib/server/agents/types").AgentEvent[],
+): OpenInteraction[] {
+  const open = new Map<string, OpenInteraction>();
+  for (const e of events) {
+    if (e.type === "permission-request") {
+      open.set(`p:${e.requestId}`, {
+        kind: "permission",
+        requestId: e.requestId,
+        ...(e.tool ? { tool: e.tool } : {}),
+        ...(e.description ? { description: e.description } : {}),
+      });
+    } else if (e.type === "permission-response") {
+      open.delete(`p:${e.requestId}`);
+    } else if (e.type === "question") {
+      open.set(`q:${e.questionId}`, {
+        kind: "question",
+        requestId: e.questionId,
+        prompt: e.prompt,
+        ...(e.choices ? { choices: e.choices } : {}),
+        ...(e.options ? { options: e.options } : {}),
+      });
+    } else if (e.type === "answer") {
+      open.delete(`q:${e.questionId}`);
+    } else if (e.type === "mcp-add-request") {
+      open.set(`m:${e.requestId}`, {
+        kind: "mcp-add",
+        requestId: e.requestId,
+        label: e.label,
+        ...(e.secrets ? { secrets: e.secrets } : {}),
+      });
+    } else if (e.type === "mcp-add-response") {
+      open.delete(`m:${e.requestId}`);
+    }
+  }
+  return [...open.values()];
+}
+
+/** The agent currently (or most recently) running this topic. */
+function agentIdForTopic(topicId: string): string | null {
+  const list = agentManager.list({ topicId });
+  if (list.length === 0) return null;
+  const running = list.find((a) => a.status === "running" || a.status === "starting");
+  return (running ?? list[list.length - 1])?.id ?? null;
 }
 
 function stripMarkers(text: string): string {
