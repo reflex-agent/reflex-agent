@@ -132,53 +132,61 @@ export function ChatView({
     scrollToBottom();
   }, [turns, scrollToBottom]);
 
-  // Subscribe to the live SSE stream.
+  // Subscribe to the live SSE stream — with auto-reconnect. A single fetch
+  // ends on any blip (server restart, proxy/idle timeout, network drop); we
+  // loop and re-open it, always with `since=lastSeq.current` so we resume
+  // exactly where we left off (no gaps, no replays). Backoff caps at 15s and
+  // resets on a successful connect. `applyEvent` dedupes by seq regardless.
   useEffect(() => {
-    const ctrl = new AbortController();
-    const url = `/api/roots/${rootId}/chat/${topicId}/stream?since=${lastSeq.current}`;
-    let stop = false;
+    let stopped = false;
+    let ctrl: AbortController | null = null;
+    let backoff = 1000;
 
-    (async () => {
-      try {
-        const res = await fetch(url, { signal: ctrl.signal });
-        if (!res.ok || !res.body) {
-          setStreamConnected(false);
-          return;
-        }
-        setStreamConnected(true);
-        const reader = res.body.getReader();
-        const dec = new TextDecoder();
-        let buf = "";
-        while (!stop) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          for (const evt of splitSSE(buf)) {
-            buf = evt.rest;
-            if (evt.event === "event" && evt.data) {
-              const ev = evt.data as AgentEvent;
-              applyEvent(ev);
-            } else if (evt.event === "error") {
-              toast.error(
-                String((evt.data as { message?: string })?.message ?? "stream"),
-              );
+    const run = async () => {
+      while (!stopped) {
+        ctrl = new AbortController();
+        try {
+          const url = `/api/roots/${rootId}/chat/${topicId}/stream?since=${lastSeq.current}`;
+          const res = await fetch(url, { signal: ctrl.signal });
+          if (!res.ok || !res.body) throw new Error(`stream HTTP ${res.status}`);
+          setStreamConnected(true);
+          backoff = 1000; // healthy connection — reset backoff
+          const reader = res.body.getReader();
+          const dec = new TextDecoder();
+          let buf = "";
+          while (!stopped) {
+            const { done, value } = await reader.read();
+            if (done) break; // server closed — fall through to reconnect
+            buf += dec.decode(value, { stream: true });
+            for (const evt of splitSSE(buf)) {
+              buf = evt.rest;
+              if (evt.event === "event" && evt.data) {
+                applyEvent(evt.data as AgentEvent);
+              } else if (evt.event === "error") {
+                toast.error(
+                  String(
+                    (evt.data as { message?: string })?.message ?? "stream",
+                  ),
+                );
+              }
             }
           }
-        }
-      } catch (err) {
-        if (!stop) {
+        } catch (err) {
+          if (stopped) return;
+          void err; // transient — reconnect below
+        } finally {
           setStreamConnected(false);
-          // Connection lost — try once more after a beat
         }
-        void err;
-      } finally {
-        setStreamConnected(false);
+        if (stopped) return;
+        await new Promise((r) => setTimeout(r, backoff));
+        backoff = Math.min(backoff * 2, 15_000);
       }
-    })();
+    };
+    void run();
 
     return () => {
-      stop = true;
-      ctrl.abort();
+      stopped = true;
+      ctrl?.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topicId, rootId]);
