@@ -38,17 +38,17 @@ export async function relayToDispatcher(args: {
   // dispatcher has it as context on its next turn.
   try {
     const { getDispatcherTopic } = await import("./dispatcher");
-    const { appendEvent, nextSeq } = await import(
-      "@/lib/server/agents/events-log"
-    );
+    const { appendEventSeq } = await import("@/lib/server/agents/events-log");
     const d = await getDispatcherTopic();
-    const seq = await nextSeq(d.rootPath, d.topicId);
-    await appendEvent(d.rootPath, d.topicId, {
+    // Same seq authority as the agent emit path — the dispatcher topic has two
+    // writers (agent turns + this relay), so both MUST share it or they mint
+    // colliding seqs on the dispatcher's log.
+    await appendEventSeq(d.rootPath, d.topicId, {
       type: "system",
       text: `[${args.spaceName}] ${args.body}`,
       agentId: "dispatcher-relay",
       ts: new Date().toISOString(),
-      seq,
+      seq: 0,
     });
   } catch {
     /* best-effort */

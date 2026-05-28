@@ -2,7 +2,7 @@ import "server-only";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import { isHomeRoot } from "@/lib/registry";
-import { appendEvent, nextSeq } from "./events-log";
+import { appendEventSeq } from "./events-log";
 import type {
   AgentEvent,
   AgentHarnessId,
@@ -599,8 +599,7 @@ class AgentManager {
         return;
       }
       if (topicId && rootPath) {
-        const seq = await nextSeq(rootPath, topicId);
-        await appendEvent(rootPath, topicId, { ...event, seq });
+        await appendEventSeq(rootPath, topicId, event);
       }
     };
 
@@ -1965,9 +1964,13 @@ class AgentManager {
   async emit(event: AgentEvent): Promise<void> {
     const state = this.agents.get(event.agentId);
     if (!state) return;
-    const seq = await nextSeq(state.rootPath, state.meta.topicId);
-    const stamped: AgentEvent = { ...event, seq };
-    await appendEvent(state.rootPath, state.meta.topicId, stamped);
+    // Atomic seq assignment + serialized append (see appendEventSeq) — no
+    // duplicate seqs when deltas/directives emit concurrently within a turn.
+    const stamped = await appendEventSeq(
+      state.rootPath,
+      state.meta.topicId,
+      event,
+    );
     if (event.type === "assistant-delta") {
       const cur = this.turnText.get(event.agentId) ?? "";
       this.turnText.set(event.agentId, cur + event.text);

@@ -4,26 +4,23 @@ import os from "node:os";
 import path from "node:path";
 import {
   appendEvent,
+  appendEventSeq,
   readEvents,
   nextSeq,
 } from "@/lib/server/agents/events-log";
 import type { AgentEvent } from "@/lib/server/agents/types";
 
 /**
- * Phase-0 tripwire for the north-star plan's #1 risk: the per-topic seq
- * assignment is NOT concurrency-safe. `nextSeq()` re-reads the whole log and
- * returns `last.seq + 1`; `emit()`/`relay.ts` then append with no lock
- * between the read and the append. Two concurrent writers read the same
- * length and mint the SAME seq — duplicate seqs, which break SSE `?since=`
- * replay and the Telegram delivery cursor.
+ * Phase-1 regression suite for per-topic seq assignment (north-star risk #1).
  *
- * These tests DOCUMENT the current (buggy) behavior so it is pinned and
- * visible. When Phase 1 lands the TurnBus (a single synchronous seq
- * authority for all writers), the assertions below FLIP — the tests will go
- * red and must be rewritten to assert uniqueness. That red is the intended
- * signal that the fix landed.
+ * `appendEventSeq` is the single seq authority: a synchronous in-memory
+ * read-and-increment + serialized append, so concurrent writers in a process
+ * always get strictly-increasing, unique, contiguous seqs and lines never
+ * interleave. The Phase-0 tripwire DOCUMENTED the old race; these now ASSERT
+ * the fix. (The legacy `nextSeq()` + `appendEvent()` pattern is still racy by
+ * design — kept here as the contrast that motivates the authority.)
  */
-describe("events-log seq assignment under concurrency (Phase-0 tripwire)", () => {
+describe("seq authority — appendEventSeq", () => {
   let root: string;
 
   beforeEach(async () => {
@@ -33,48 +30,80 @@ describe("events-log seq assignment under concurrency (Phase-0 tripwire)", () =>
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  const ev = (i: number, seq: number): AgentEvent =>
+  const ev = (i: number): AgentEvent =>
     ({
       type: "system",
       text: `e${i}`,
       agentId: "x",
       ts: new Date(0).toISOString(),
-      seq,
+      seq: 0, // ignored — appendEventSeq assigns it
     }) as AgentEvent;
 
-  it("concurrent nextSeq() returns colliding seqs (TurnBus fixes this in Phase 1)", async () => {
+  it("assigns unique, contiguous seqs under heavy concurrency", async () => {
     const topicId = "t";
-    await appendEvent(root, topicId, ev(0, 0)); // seed: last seq = 0
+    const N = 32;
 
-    // Eight callers ask for the next seq concurrently. With no lock, they all
-    // observe the same last line and all return 1.
+    const assigned = await Promise.all(
+      Array.from({ length: N }, (_, i) => appendEventSeq(root, topicId, ev(i))),
+    );
+
+    const returnedSeqs = assigned.map((e) => e.seq).sort((a, b) => a - b);
+    expect(returnedSeqs).toEqual(Array.from({ length: N }, (_, i) => i));
+
+    // And the same is true of what actually landed on disk.
+    const onDisk = (await readEvents(root, topicId)).map((e) => e.seq);
+    expect(new Set(onDisk).size).toBe(N); // all unique
+    expect([...onDisk].sort((a, b) => a - b)).toEqual(
+      Array.from({ length: N }, (_, i) => i),
+    );
+  });
+
+  it("serializes appends — every line is intact (no interleaving)", async () => {
+    const topicId = "t";
+    const N = 40;
+    await Promise.all(
+      Array.from({ length: N }, (_, i) => appendEventSeq(root, topicId, ev(i))),
+    );
+    // readEvents skips malformed lines; if appends interleaved we'd lose some.
+    expect((await readEvents(root, topicId)).length).toBe(N);
+  });
+
+  it("seeds the counter from an existing log (continues past last seq)", async () => {
+    const topicId = "t";
+    // Simulate prior history written before this process started.
+    await appendEvent(root, topicId, { ...ev(0), seq: 0 });
+    await appendEvent(root, topicId, { ...ev(1), seq: 1 });
+    await appendEvent(root, topicId, { ...ev(2), seq: 2 });
+
+    const first = await appendEventSeq(root, topicId, ev(3));
+    const second = await appendEventSeq(root, topicId, ev(4));
+    expect(first.seq).toBe(3);
+    expect(second.seq).toBe(4);
+  });
+});
+
+describe("legacy nextSeq() — deprecated, racy (motivates the authority)", () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "reflex-seq-legacy-"));
+  });
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("concurrent nextSeq() returns colliding seqs (do not append with this)", async () => {
+    const topicId = "t";
+    await appendEvent(root, topicId, {
+      type: "system",
+      text: "seed",
+      agentId: "x",
+      ts: new Date(0).toISOString(),
+      seq: 0,
+    } as AgentEvent);
+
     const seqs = await Promise.all(
       Array.from({ length: 8 }, () => nextSeq(root, topicId)),
     );
-
-    const unique = new Set(seqs);
-    // CURRENT behavior: every caller minted the same seq.
-    expect(unique.size).toBeLessThan(seqs.length);
-    // (Phase-1 target: `expect(unique.size).toBe(seqs.length)`.)
-  });
-
-  it("concurrent read-then-append yields a non-contiguous seq sequence", async () => {
-    const topicId = "t";
-    const N = 16;
-
-    await Promise.all(
-      Array.from({ length: N }, (_, i) =>
-        (async () => {
-          const seq = await nextSeq(root, topicId);
-          await appendEvent(root, topicId, ev(i, seq));
-        })(),
-      ),
-    );
-
-    const seqs = (await readEvents(root, topicId)).map((e) => e.seq);
-    const unique = new Set(seqs);
-    // CURRENT behavior: collisions, so distinct seqs < total appended events.
-    // (Phase-1 target: a contiguous 0..N-1 with no duplicates.)
-    expect(unique.size).toBeLessThan(seqs.length);
+    expect(new Set(seqs).size).toBeLessThan(seqs.length); // they collide
   });
 });
