@@ -46,9 +46,20 @@ interface Props {
   rootId: string;
   initial: WorkflowDef;
   initialRuns: WorkflowRun[];
+  /** Utility-provided workflows are managed by the manifest — editing /
+   *  deleting here is disabled; only Run + run history are live. */
+  readOnly?: boolean;
+  /** Utility id when readOnly (for the "provided by" banner). */
+  sourceUtilityId?: string;
 }
 
-export function WorkflowEditor({ rootId, initial, initialRuns }: Props) {
+export function WorkflowEditor({
+  rootId,
+  initial,
+  initialRuns,
+  readOnly,
+  sourceUtilityId,
+}: Props) {
   const t = useTranslations("roots");
   const router = useRouter();
   const [wf, setWf] = useState<WorkflowDef>(initial);
@@ -59,6 +70,7 @@ export function WorkflowEditor({ rootId, initial, initialRuns }: Props) {
   const [saving, startSave] = useTransition();
 
   const save = (next: WorkflowDef) => {
+    if (readOnly) return; // utility-managed — no on-disk persistence
     setWf(next);
     startSave(async () => {
       const r = await saveWorkflowAction(rootId, next);
@@ -142,6 +154,14 @@ export function WorkflowEditor({ rootId, initial, initialRuns }: Props) {
 
   return (
     <div className="space-y-6">
+      {readOnly && (
+        <div className="rounded-md border border-violet-200 bg-violet-50 dark:bg-violet-950/20 px-4 py-2.5 text-xs text-violet-900 dark:text-violet-200">
+          Provided by the{" "}
+          <span className="font-mono">{sourceUtilityId ?? "utility"}</span>{" "}
+          mini-app — managed by its manifest, so it's read-only here. You can
+          still run it manually and review the history below.
+        </div>
+      )}
       <div className="rounded-md border bg-card p-4 space-y-3">
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-muted-foreground">
@@ -151,6 +171,7 @@ export function WorkflowEditor({ rootId, initial, initialRuns }: Props) {
             value={wf.label}
             onChange={(e) => save({ ...wf, label: e.target.value })}
             className="text-sm"
+            disabled={readOnly}
           />
         </div>
         <div className="space-y-1.5">
@@ -162,6 +183,7 @@ export function WorkflowEditor({ rootId, initial, initialRuns }: Props) {
             onChange={(e) => save({ ...wf, description: e.target.value })}
             className="text-sm"
             placeholder={t("workflowEditor.descriptionPlaceholder")}
+            disabled={readOnly}
           />
         </div>
         <div className="flex items-center gap-3">
@@ -174,6 +196,7 @@ export function WorkflowEditor({ rootId, initial, initialRuns }: Props) {
               onValueChange={(v) =>
                 save({ ...wf, trigger: v as WorkflowTrigger })
               }
+              disabled={readOnly}
             >
               <SelectTrigger className="h-8 w-32">
                 <SelectValue />
@@ -201,17 +224,19 @@ export function WorkflowEditor({ rootId, initial, initialRuns }: Props) {
                 {t("workflowEditor.saving")}
               </span>
             )}
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={onDelete}
-              disabled={saving}
-              className="text-muted-foreground hover:text-destructive"
-            >
-              <Trash2 className="h-3.5 w-3.5 mr-1" />
-              {t("workflowEditor.delete")}
-            </Button>
+            {!readOnly && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={onDelete}
+                disabled={saving}
+                className="text-muted-foreground hover:text-destructive"
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1" />
+                {t("workflowEditor.delete")}
+              </Button>
+            )}
             <Button
               type="button"
               size="sm"
@@ -240,6 +265,7 @@ export function WorkflowEditor({ rootId, initial, initialRuns }: Props) {
             step={step}
             idx={idx}
             total={wf.steps.length}
+            readOnly={readOnly}
             editing={editing === step.id}
             onToggleEdit={() =>
               setEditing(editing === step.id ? null : step.id)
@@ -281,7 +307,7 @@ export function WorkflowEditor({ rootId, initial, initialRuns }: Props) {
               ))}
             </div>
           </div>
-        ) : (
+        ) : readOnly ? null : (
           <Button
             type="button"
             variant="outline"
@@ -304,6 +330,7 @@ function StepCard({
   step,
   idx,
   total,
+  readOnly,
   editing,
   onToggleEdit,
   onMoveUp,
@@ -314,6 +341,7 @@ function StepCard({
   step: WorkflowStep;
   idx: number;
   total: number;
+  readOnly?: boolean;
   editing: boolean;
   onToggleEdit: () => void;
   onMoveUp: () => void;
@@ -343,44 +371,51 @@ function StepCard({
           )}
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            onClick={onMoveUp}
-            disabled={idx === 0}
-            className="h-7 w-7"
-          >
-            <ChevronUp className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            onClick={onMoveDown}
-            disabled={idx === total - 1}
-            className="h-7 w-7"
-          >
-            <ChevronDown className="h-3.5 w-3.5" />
-          </Button>
+          {!readOnly && (
+            <>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                onClick={onMoveUp}
+                disabled={idx === 0}
+                className="h-7 w-7"
+              >
+                <ChevronUp className="h-3.5 w-3.5" />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                onClick={onMoveDown}
+                disabled={idx === total - 1}
+                className="h-7 w-7"
+              >
+                <ChevronDown className="h-3.5 w-3.5" />
+              </Button>
+            </>
+          )}
           <Button
             type="button"
             size="icon"
             variant="ghost"
             onClick={onToggleEdit}
             className="h-7 w-7"
+            title={readOnly ? "View step config" : undefined}
           >
             <Pencil className="h-3.5 w-3.5" />
           </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="ghost"
-            onClick={onRemove}
-            className="h-7 w-7 text-muted-foreground hover:text-destructive"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+          {!readOnly && (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              onClick={onRemove}
+              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
         </div>
       </div>
       {editing && (

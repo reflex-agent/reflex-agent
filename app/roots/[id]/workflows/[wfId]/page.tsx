@@ -5,6 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { getRoot } from "@/lib/registry";
 import { listRuns, readWorkflow } from "@/lib/server/workflows/store";
+import { collectExtensions } from "@/lib/server/utilities/extensions";
+import { listUtilities } from "@/lib/server/utilities/store";
+import type { WorkflowDef } from "@/lib/server/workflows/types";
 import { WorkflowEditor } from "./_components/workflow-editor";
 
 export default async function WorkflowEditorPage({
@@ -15,9 +18,25 @@ export default async function WorkflowEditorPage({
   const { id, wfId } = await params;
   const entry = await getRoot(id);
   if (!entry) notFound();
-  const wf = await readWorkflow(entry.path, wfId);
+
+  // Project-stored workflow first; fall back to utility-provided ones so
+  // a manifest workflow (e.g. task-board-auto-pickup) is viewable too —
+  // read-only, since its definition lives in the utility's manifest.
+  let wf: WorkflowDef | null = await readWorkflow(entry.path, wfId);
+  let sourceUtilityId: string | undefined;
+  if (!wf) {
+    const ext = await collectExtensions({ rootId: id });
+    wf = ext.workflows.find((w) => w.id === wfId) ?? null;
+    if (wf) {
+      const installed = await listUtilities({ rootId: id }).catch(() => []);
+      sourceUtilityId = installed.find((u) =>
+        (u.manifest.extensions?.workflows ?? []).some((w) => w.id === wfId),
+      )?.manifest.id;
+    }
+  }
   if (!wf) notFound();
-  const runs = await listRuns(entry.path, wfId, 10);
+  const readOnly = sourceUtilityId !== undefined;
+  const runs = await listRuns(entry.path, wfId, 20);
 
   return (
     <main className="flex-1 flex flex-col min-h-0">
@@ -40,7 +59,13 @@ export default async function WorkflowEditorPage({
       <Separator />
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-6 max-w-4xl mx-auto">
-          <WorkflowEditor rootId={entry.id} initial={wf} initialRuns={runs} />
+          <WorkflowEditor
+            rootId={entry.id}
+            initial={wf}
+            initialRuns={runs}
+            readOnly={readOnly}
+            {...(sourceUtilityId ? { sourceUtilityId } : {})}
+          />
         </div>
       </div>
     </main>

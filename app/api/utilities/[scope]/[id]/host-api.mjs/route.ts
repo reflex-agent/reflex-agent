@@ -33,23 +33,41 @@ function rpc(method, args) {
   });
 }
 
-function ns(namespace) {
-  return new Proxy({}, {
-    get(_t, method) {
-      if (typeof method !== "string") return undefined;
-      return (args) => rpc(namespace + "." + method, args);
+// Each node is a CALLABLE proxy: invoking it fires an RPC for its dotted
+// path, while property access descends one level. This is what makes
+// BOTH \`reflex.kb.list(args)\` (2-level) and
+// \`reflex.git.worktree.merge(args)\` (3-level) work — a flat one-level
+// proxy turned \`git.worktree\` into a function whose \`.merge\` was
+// undefined, so 3-level calls silently threw.
+function node(path) {
+  const target = function () {};
+  return new Proxy(target, {
+    get(_t, key) {
+      if (typeof key !== "string") return undefined;
+      // Don't masquerade as a thenable — otherwise \`await someNamespace\`
+      // (or a stray await on a non-leaf) would hang.
+      if (key === "then" || key === "catch" || key === "finally") {
+        return undefined;
+      }
+      return node(path ? path + "." + key : key);
+    },
+    apply(_t, _this, argList) {
+      return rpc(path, argList[0]);
     },
   });
 }
 
-// Top-level Proxy mirrors the worker-side bootstrap: any namespace is
-// resolved dynamically so adding a new host namespace on the server
-// doesn't require redeploying the proxy. Explicit named exports below
-// give static IDE hints to utility authors.
+function ns(namespace) {
+  return node(namespace);
+}
+
+// Top-level Proxy: any namespace is resolved dynamically so adding a new
+// host namespace on the server doesn't require redeploying the proxy.
+// Explicit named exports below give static IDE hints to utility authors.
 export const reflex = new Proxy({}, {
   get(_target, namespace) {
     if (typeof namespace !== "string") return undefined;
-    return ns(namespace);
+    return node(namespace);
   },
 });
 export const llm = ns("llm");
