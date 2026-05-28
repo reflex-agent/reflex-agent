@@ -46,6 +46,8 @@ export const SKILL_CREATE_OPEN = "<<reflex:skill-create>>";
 export const SKILL_CREATE_CLOSE = "<</reflex:skill-create>>";
 export const NOTIFY_OPEN = "<<reflex:notify>>";
 export const NOTIFY_CLOSE = "<</reflex:notify>>";
+export const ROUTE_OPEN = "<<reflex:route>>";
+export const ROUTE_CLOSE = "<</reflex:route>>";
 export const TASK_CREATE_OPEN = "<<reflex:task-create>>";
 export const TASK_CREATE_CLOSE = "<</reflex:task-create>>";
 export const TASK_UPDATE_OPEN = "<<reflex:task-update>>";
@@ -197,6 +199,35 @@ export interface NotifyDirective {
 export function extractNotifies(text: string): NotifyDirective[] {
   return extractAll<NotifyDirective>(text, NOTIFY_OPEN, NOTIFY_CLOSE).filter(
     (e): e is NotifyDirective => !!e && typeof e.body === "string" && !!e.body,
+  );
+}
+
+/**
+ * Cross-Space dispatch — only honoured from the home/dispatcher chat.
+ * Lets the central thread create Spaces and push work INTO other Spaces
+ * (file a task, or run an agent turn there).
+ */
+export interface RouteDirective {
+  kind: "space-create" | "task" | "dispatch";
+  /** space-create: human title (slugified for the dir). */
+  title?: string;
+  /** space-create: optional absolute path; defaults under ~/reflex-spaces. */
+  path?: string;
+  /** task / dispatch: target Space (registry root id). */
+  rootId?: string;
+  /** task: body / acceptance criteria. */
+  body?: string;
+  /** task: feature|bug|research|… (defaults feature). */
+  taskType?: string;
+  /** dispatch: the prompt to run an agent with in the target Space. */
+  prompt?: string;
+}
+
+export function extractRoutes(text: string): RouteDirective[] {
+  return extractAll<RouteDirective>(text, ROUTE_OPEN, ROUTE_CLOSE).filter(
+    (e): e is RouteDirective =>
+      !!e &&
+      (e.kind === "space-create" || e.kind === "task" || e.kind === "dispatch"),
   );
 }
 

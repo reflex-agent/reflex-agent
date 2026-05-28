@@ -89,6 +89,18 @@ async function tick(handle: SchedulerHandle): Promise<void> {
       }
     }
     await processSystemTasks(handle);
+    // Fold the idle dispatcher thread into its rolling summary. Self-gates
+    // on idle time + already-compacted, so running every tick is cheap.
+    try {
+      const { compactDispatcherIfIdle } = await import(
+        "@/lib/server/home/dispatcher"
+      );
+      await compactDispatcherIfIdle();
+    } catch (err) {
+      console.error(
+        `[scheduler] dispatcher compaction failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   } finally {
     handle.running = false;
   }

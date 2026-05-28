@@ -202,6 +202,8 @@ export async function startOrchestratorTurn(args: {
     // a per-turn block if the user invoked a utility-declared command.
     ...extensions.promptBlocks.map((p) => p.content),
     findUtilityCommandPromptBlock(richCommand, extensions, language) ?? "",
+    // Dispatcher mode — only in the home Space.
+    await dispatcherInstructions(args.rootId, language),
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -243,7 +245,11 @@ export async function startOrchestratorTurn(args: {
   // continues the turn with Gemini output. No regex pre-flight here.
   void (async () => {
     try {
-      const transcript = await renderTranscript(entry.path, args.topicId);
+      const transcript = await renderTranscript(
+        entry.path,
+        args.topicId,
+        args.rootId,
+      );
       const userBlock = renderUserBlock(effectiveMessage, args.attachments);
       const prompt = transcript
         ? `Prior conversation:\n\n${transcript}\n\n${userBlock}\n\n### assistant\n(Reply now.)`
@@ -278,6 +284,46 @@ export async function startOrchestratorTurn(args: {
  * key points). For purely meta questions ("what player is best",
  * "fix this URL") the agent just answers directly without the directive.
  */
+/**
+ * Dispatcher addendum — injected only when the chat runs in the home
+ * Space. Turns the orchestrator into the central dispatcher: it knows
+ * the user's Spaces and can act across them via `<<reflex:route>>`.
+ */
+async function dispatcherInstructions(
+  rootId: string,
+  language: string,
+): Promise<string> {
+  const { isHomeRoot, listRoots } = await import("@/lib/registry");
+  if (!isHomeRoot(rootId)) return "";
+  const roots = await listRoots().catch(() => []);
+  const list =
+    roots.length > 0
+      ? roots
+          .map((r) => `  - ${r.path.split("/").filter(Boolean).pop()} → id: ${r.id}`)
+          .join("\n")
+      : "  (none yet)";
+  return [
+    "## You are the dispatcher",
+    "",
+    `Reply in ${language}. This is the central, always-on thread — the user talks to you here AND from Telegram (same conversation). Two jobs:`,
+    "  1. Collect durable facts about the user/their world into global memory (use `<<reflex:memory>>` with scope:\"global\").",
+    "  2. Route work into the right Space. You can act ACROSS Spaces with `<<reflex:route>>`:",
+    "",
+    "```",
+    `<<reflex:route>>{"kind":"space-create","title":"Side project X"}<</reflex:route>>`,
+    `<<reflex:route>>{"kind":"task","rootId":"<space-id>","title":"…","body":"…","taskType":"feature"}<</reflex:route>>`,
+    `<<reflex:route>>{"kind":"dispatch","rootId":"<space-id>","prompt":"…what the agent should do there…"}<</reflex:route>>`,
+    "```",
+    "",
+    "Known Spaces (use their id as `rootId`):",
+    list,
+    "",
+    "- `space-create` registers a new Space (folder under ~/reflex-spaces unless you pass `path`).",
+    "- `task` files a card on that Space's board. `dispatch` starts an agent working in that Space immediately.",
+    "- Prefer routing over doing project work here — this thread coordinates; the Spaces do the work. Confirm what you routed in one line.",
+  ].join("\n");
+}
+
 function findUtilityCommandPromptBlock(
   rich: { def: CommandDef; payload: string } | null,
   extensions: Awaited<ReturnType<typeof collectExtensions>>,
@@ -463,8 +509,20 @@ function renderUserBlockPlain(
 async function renderTranscript(
   rootPath: string,
   topicId: string,
+  rootId?: string,
 ): Promise<string> {
-  const events = await readEvents(rootPath, topicId);
+  let events = await readEvents(rootPath, topicId);
+  let prefix = "";
+  // Dispatcher thread is infinite — fold covered history into the rolling
+  // summary so the prompt stays bounded (canonical log untouched).
+  if (rootId && (await import("@/lib/registry")).isHomeRoot(rootId)) {
+    const { getDispatcherSummary } = await import("@/lib/server/home/dispatcher");
+    const summary = await getDispatcherSummary(topicId);
+    if (summary && summary.coveredCount < events.length) {
+      prefix = `### context (summary of earlier conversation)\n${summary.text}\n\n`;
+      events = events.slice(summary.coveredCount);
+    }
+  }
   const lines: string[] = [];
   let current: { role: "user" | "assistant"; text: string } | null = null;
   const flush = () => {
@@ -488,5 +546,5 @@ async function renderTranscript(
     }
   }
   flush();
-  return lines.join("\n\n");
+  return prefix + lines.join("\n\n");
 }

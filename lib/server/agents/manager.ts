@@ -1,6 +1,7 @@
 import "server-only";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { isHomeRoot } from "@/lib/registry";
 import { appendEvent, nextSeq } from "./events-log";
 import type {
   AgentEvent,
@@ -21,6 +22,7 @@ import {
   extractMcpAdds,
   extractMemoryWrites,
   extractNotifies,
+  extractRoutes,
   extractPermissions,
   extractQuestions,
   extractSkillCreates,
@@ -1097,6 +1099,10 @@ class AgentManager {
       await this.processSkillCreates(buf, agentId, state.rootPath);
       await this.processTaskMarkers(buf, agentId, state.rootPath);
       await this.processNotifies(buf, agentId);
+      // Cross-Space dispatch is honoured only from the home/dispatcher chat.
+      if (isHomeRoot(state.meta.rootId)) {
+        await this.processRoutes(buf, agentId);
+      }
       const utilityDirs = extractUtilityDirectives(buf);
       for (const u of utilityDirs) {
         try {
@@ -1504,6 +1510,99 @@ class AgentManager {
         await this.emit({
           type: "error",
           message: `notify failed: ${err instanceof Error ? err.message : String(err)}`,
+          agentId,
+          ts: now(),
+          seq: 0,
+        });
+      }
+    }
+  }
+
+  /**
+   * `<<reflex:route>>` — cross-Space dispatch from the central dispatcher
+   * thread. Create a Space, file a task into one, or run an agent turn in
+   * one. Each action emits a `system` line so the dispatcher chat shows
+   * what happened. Failures surface as `error` events, never block.
+   */
+  private async processRoutes(buf: string, agentId: string): Promise<void> {
+    const routes = extractRoutes(buf);
+    if (routes.length === 0) return;
+    const { getRoot, addRoot } = await import("@/lib/registry");
+    for (const r of routes) {
+      try {
+        if (r.kind === "space-create") {
+          const title = (r.title ?? "").trim();
+          if (!title) throw new Error("space-create: title required");
+          const os = await import("node:os");
+          const path = await import("node:path");
+          const slug =
+            title
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "-")
+              .replace(/^-+|-+$/g, "") || "space";
+          const dir =
+            r.path && r.path.trim()
+              ? r.path.trim()
+              : path.join(os.homedir(), "reflex-spaces", slug);
+          const { promises: fs } = await import("node:fs");
+          await fs.mkdir(dir, { recursive: true });
+          const entry = await addRoot(dir);
+          await this.emit({
+            type: "system",
+            text: `Created Space "${title}" → ${entry.id} (${dir})`,
+            agentId,
+            ts: now(),
+            seq: 0,
+          });
+        } else if (r.kind === "task") {
+          const target = await getRoot(r.rootId ?? "");
+          if (!target) throw new Error(`task: unknown Space ${r.rootId}`);
+          const { createTask } = await import("@/lib/server/tasks/store");
+          const task = await createTask(target.path, {
+            title: (r.title ?? "").trim() || "Untitled task",
+            ...(r.body ? { body: r.body } : {}),
+            ...(r.taskType
+              ? { type: r.taskType as Parameters<typeof createTask>[1]["type"] }
+              : {}),
+          });
+          await this.emit({
+            type: "system",
+            text: `Filed task "${task.title}" in ${r.rootId} (${task.id})`,
+            agentId,
+            ts: now(),
+            seq: 0,
+          });
+        } else if (r.kind === "dispatch") {
+          const target = await getRoot(r.rootId ?? "");
+          if (!target) throw new Error(`dispatch: unknown Space ${r.rootId}`);
+          const prompt = (r.prompt ?? "").trim();
+          if (!prompt) throw new Error("dispatch: prompt required");
+          const { createTopic } = await import("@/lib/server/topics");
+          const { startOrchestratorTurn } = await import("./start-turn");
+          const topic = await createTopic({
+            root: target.path,
+            firstMessage: prompt,
+          });
+          // Fire-and-forget — the dispatched agent streams into its own
+          // topic; we don't block the dispatcher waiting on it.
+          void startOrchestratorTurn({
+            rootId: target.id,
+            topicId: topic.meta.id,
+            message: prompt,
+            attachments: [],
+          });
+          await this.emit({
+            type: "system",
+            text: `Dispatched an agent in ${r.rootId} → /roots/${r.rootId}/chat/${topic.meta.id}`,
+            agentId,
+            ts: now(),
+            seq: 0,
+          });
+        }
+      } catch (err) {
+        await this.emit({
+          type: "error",
+          message: `route (${r.kind}) failed: ${err instanceof Error ? err.message : String(err)}`,
           agentId,
           ts: now(),
           seq: 0,
