@@ -84,6 +84,7 @@ import type {
 } from "@/lib/server/workflows/types";
 import { readEvents } from "./events-log";
 import { projectTranscript } from "./transcript";
+import type { NotifyPayload } from "@/lib/server/notify";
 import { writeKbEntry } from "./kb-writer";
 import {
   diffKb,
@@ -1502,14 +1503,21 @@ class AgentManager {
   private async processNotifies(buf: string, agentId: string): Promise<void> {
     const items = extractNotifies(buf);
     if (items.length === 0) return;
-    const { notify } = await import("@/lib/server/notify");
+    // Phase 4: the agent's notify marker now flows through the unified
+    // CapabilityRegistry (the same `notify` capability utilities/workflows can
+    // use), instead of calling notify() inline. Behavior-identical.
+    const reg = await ensureNotifyCapability();
     for (const n of items) {
       try {
-        await notify({
-          body: n.body,
-          ...(n.title ? { title: n.title } : {}),
-          ...(n.link ? { link: n.link } : {}),
-        });
+        await reg.invoke(
+          "notify",
+          {
+            body: n.body,
+            ...(n.title ? { title: n.title } : {}),
+            ...(n.link ? { link: n.link } : {}),
+          },
+          { caller: "agent" },
+        );
       } catch (err) {
         await this.emit({
           type: "error",
@@ -2183,6 +2191,30 @@ async function buildTranscript(
   topicId: string,
 ): Promise<string> {
   return projectTranscript(await readEvents(rootPath, topicId));
+}
+
+/**
+ * Register the generic `notify` capability on the shared CapabilityRegistry
+ * (Phase 4 — converging the agent marker plane onto the registry, one marker
+ * at a time, starting with the safe fire-and-return ones). Idempotent; the run
+ * wraps the same notify() so routing through it is behavior-identical.
+ */
+async function ensureNotifyCapability() {
+  const { capabilityRegistry } = await import(
+    "@/lib/server/capabilities/registry"
+  );
+  const reg = capabilityRegistry();
+  if (!reg.has("notify")) {
+    const { notify } = await import("@/lib/server/notify");
+    reg.register({
+      kind: "sync",
+      id: "notify",
+      audit: "always",
+      doc: "Send a notification to the user's channels (Telegram, push).",
+      run: (input) => notify(input as NotifyPayload),
+    });
+  }
+  return reg;
 }
 
 declare global {
