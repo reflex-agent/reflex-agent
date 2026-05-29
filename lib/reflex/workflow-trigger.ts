@@ -20,6 +20,15 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
 
+/**
+ * How late a wall-clock (`at:`) trigger may still fire after its target time.
+ * Covers a scheduler that missed the exact tick (a restart), but NOT a slot
+ * that's hours stale — so a freshly-installed or long-asleep `at:06:00` does
+ * not fire at, say, 20:00 just because the clock is past 06:00. Past the
+ * window, it waits for the next occurrence.
+ */
+const WALLCLOCK_CATCHUP_MS = HOUR;
+
 const FIXED_INTERVALS: Record<string, number> = {
   hourly: HOUR,
   daily: DAY,
@@ -56,6 +65,7 @@ function wallClockDue(
   target.setHours(hh, mm, 0, 0);
   const targetMs = target.getTime();
   if (now.getTime() < targetMs) return false; // not yet time today
+  if (now.getTime() - targetMs > WALLCLOCK_CATCHUP_MS) return false; // slot too stale
   if (lastFired !== null && lastFired >= targetMs) return false; // already fired
   return true;
 }

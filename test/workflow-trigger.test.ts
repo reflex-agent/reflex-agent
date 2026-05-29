@@ -54,8 +54,20 @@ describe("isTriggerDue — wall-clock daily at:HH:MM", () => {
     // before the target time today → not yet
     const at0559 = new Date(2026, 0, 5, 5, 59, 0, 0);
     expect(isTriggerDue("at:06:00", yesterday, at0559)).toBe(false);
-    // never fired, past target → due
+    // never fired, just past target (within catch-up window) → due
     expect(isTriggerDue("at:06:00", null, at0601)).toBe(true);
+  });
+
+  it("does not fire a stale slot — no install-time flood", () => {
+    // 14h after the target, never fired → must NOT fire (the flood regression)
+    const lateEvening = new Date(2026, 0, 5, 20, 16, 0, 0);
+    expect(isTriggerDue("at:06:00", null, lateEvening)).toBe(false);
+    const yesterday = new Date(2026, 0, 4, 6, 0, 0, 0).getTime();
+    expect(isTriggerDue("at:06:00", yesterday, lateEvening)).toBe(false);
+    // within the 1h catch-up window (restart) → still fires
+    expect(isTriggerDue("at:06:00", null, new Date(2026, 0, 5, 6, 30, 0, 0))).toBe(true);
+    // 90 min late → past the window → waits for the next occurrence
+    expect(isTriggerDue("at:06:00", null, new Date(2026, 0, 5, 7, 30, 0, 0))).toBe(false);
   });
 });
 
