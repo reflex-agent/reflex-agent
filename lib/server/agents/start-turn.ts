@@ -6,6 +6,7 @@ import { loadSettings } from "@/lib/settings/store";
 import { getRoot } from "@/lib/registry";
 import { agentManager } from "./manager";
 import { readEvents } from "./events-log";
+import { projectTranscript } from "./transcript";
 import {
   detectSlashCommand,
   distillInstructions,
@@ -550,28 +551,5 @@ async function renderTranscript(
       events = events.slice(summary.coveredCount);
     }
   }
-  const lines: string[] = [];
-  let current: { role: "user" | "assistant"; text: string } | null = null;
-  const flush = () => {
-    if (!current) return;
-    lines.push(`### ${current.role}\n${current.text.trim()}`);
-    current = null;
-  };
-  for (const ev of events) {
-    if (ev.type === "user-message") {
-      flush();
-      current = { role: "user", text: ev.text };
-      flush();
-    } else if (ev.type === "assistant-delta") {
-      if (!current || current.role !== "assistant") {
-        flush();
-        current = { role: "assistant", text: "" };
-      }
-      current.text += ev.text;
-    } else if (ev.type === "turn-end" || ev.type === "agent-end") {
-      flush();
-    }
-  }
-  flush();
-  return prefix + lines.join("\n\n");
+  return projectTranscript(events, { summaryPrefix: prefix });
 }

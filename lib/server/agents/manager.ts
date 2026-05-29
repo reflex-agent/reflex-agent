@@ -83,6 +83,7 @@ import type {
   WorkflowStepKind,
 } from "@/lib/server/workflows/types";
 import { readEvents } from "./events-log";
+import { projectTranscript } from "./transcript";
 import { writeKbEntry } from "./kb-writer";
 import {
   diffKb,
@@ -2181,31 +2182,7 @@ async function buildTranscript(
   rootPath: string,
   topicId: string,
 ): Promise<string> {
-  const events = await readEvents(rootPath, topicId);
-  const lines: string[] = [];
-  let current: { role: "user" | "assistant"; text: string } | null = null;
-  const flush = () => {
-    if (!current) return;
-    lines.push(`### ${current.role}\n${current.text.trim()}`);
-    current = null;
-  };
-  for (const ev of events) {
-    if (ev.type === "user-message") {
-      flush();
-      current = { role: "user", text: ev.text };
-      flush();
-    } else if (ev.type === "assistant-delta") {
-      if (!current || current.role !== "assistant") {
-        flush();
-        current = { role: "assistant", text: "" };
-      }
-      current.text += ev.text;
-    } else if (ev.type === "turn-end" || ev.type === "agent-end") {
-      flush();
-    }
-  }
-  flush();
-  return lines.join("\n\n");
+  return projectTranscript(await readEvents(rootPath, topicId));
 }
 
 declare global {
