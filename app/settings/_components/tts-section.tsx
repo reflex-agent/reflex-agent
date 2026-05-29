@@ -64,7 +64,9 @@ export function TtsSection() {
   useEffect(() => {
     if (provider !== "gemini") return;
     void (async () => {
-      const r = await listGeminiModelsAction(false);
+      // refresh:true — always pull the freshest list so newly-shipped TTS
+      // models (e.g. gemini-3.1-flash-tts-preview) show up immediately.
+      const r = await listGeminiModelsAction(true);
       if (!r.ok) return; // no key yet → keep fallback list
       const tts = r.models.map((m) => m.id).filter((id) => /tts/i.test(id));
       if (tts.length > 0) setModels(tts);
