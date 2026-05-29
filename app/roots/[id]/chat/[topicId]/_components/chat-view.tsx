@@ -81,7 +81,7 @@ type Segment =
         workflowId: string;
         label: string;
         description?: string;
-        trigger: "manual" | "hourly" | "daily" | "weekly";
+        trigger: string;
         stepCount: number;
       };
     };

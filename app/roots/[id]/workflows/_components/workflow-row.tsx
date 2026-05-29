@@ -6,6 +6,7 @@ import { Workflow } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { setWorkflowEnabledAction } from "@/lib/server/workflows/actions";
+import { describeTrigger } from "@/lib/reflex/workflow-trigger";
 
 /**
  * Render a single row on the workflows list with the runtime info the
@@ -20,7 +21,7 @@ export interface WorkflowRowProps {
     id: string;
     label: string;
     description?: string;
-    trigger: "manual" | "hourly" | "daily" | "weekly";
+    trigger: string;
     stepCount: number;
     enabled: boolean;
     lastRun: {
@@ -60,7 +61,7 @@ export function WorkflowRow({ rootId, wf, href }: WorkflowRowProps) {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-medium truncate">{wf.label}</span>
             <Badge variant="outline" className="text-[10px]">
-              {wf.trigger}
+              {describeTrigger(wf.trigger)}
             </Badge>
             <Badge variant="secondary" className="text-[10px]">
               {wf.stepCount} {wf.stepCount === 1 ? "step" : "steps"}

@@ -11,7 +11,19 @@
  * runner renders params before invoking the node handler.
  */
 
-export type WorkflowTrigger = "manual" | "hourly" | "daily" | "weekly";
+/**
+ * Trigger cadence. The four presets plus extended forms parsed by
+ * `lib/reflex/workflow-trigger.ts`: `every:<n><m|h|d>` (sub-hourly / custom
+ * interval) and `at:HH:MM` / `at:<dow>@HH:MM` (wall-clock). The `(string & {})`
+ * keeps editor autocomplete for the presets while allowing the extended forms.
+ */
+export type WorkflowTrigger =
+  | "manual"
+  | "hourly"
+  | "daily"
+  | "weekly"
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
+  | (string & {});
 
 export type WorkflowStepKind =
   | "text-template"

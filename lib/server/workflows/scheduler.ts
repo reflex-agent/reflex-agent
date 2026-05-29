@@ -4,7 +4,8 @@ import { listWorkflows, listRuns } from "./store";
 import { runWorkflow } from "./runner";
 import { SYSTEM_TASKS, SYSTEM_TASK_INTERVAL_MS } from "./system-tasks";
 import { backgroundRuntime } from "@/lib/server/runtime/background-runtime";
-import type { WorkflowDef, WorkflowTrigger } from "./types";
+import { isTriggerDue } from "@/lib/reflex/workflow-trigger";
+import type { WorkflowDef } from "./types";
 
 /**
  * Durable background scheduler.
@@ -21,15 +22,8 @@ import type { WorkflowDef, WorkflowTrigger } from "./types";
  */
 
 const TICK_INTERVAL_MS = 60_000; // every minute
-// Map a trigger word to the interval (ms) the scheduler waits between runs.
-// `manual` workflows are never fired by this loop — they only run when
-// the user (or another piece of code) explicitly calls `runWorkflow`.
-const INTERVAL_MS: Record<WorkflowTrigger, number | null> = {
-  manual: null,
-  hourly: 60 * 60 * 1000,
-  daily: 24 * 60 * 60 * 1000,
-  weekly: 7 * 24 * 60 * 60 * 1000,
-};
+// Trigger matching (interval + wall-clock forms) lives in
+// `lib/reflex/workflow-trigger.ts` (isTriggerDue). `manual` never auto-fires.
 
 interface SchedulerHandle {
   running: boolean;
@@ -127,13 +121,13 @@ async function processRoot(
   const utilityWorkflows = await loadUtilityWorkflows(root.id);
   const workflows = mergeWorkflows(projectWorkflows, utilityWorkflows);
 
+  const now = new Date();
   for (const wf of workflows) {
-    const interval = INTERVAL_MS[wf.trigger];
-    if (!interval) continue;
     if (wf.enabled === false) continue;
+    if (!wf.trigger || wf.trigger === "manual") continue;
     const k = key(root.id, wf.id);
     const last = handle.lastFired.get(k) ?? (await diskLastRun(root.path, wf.id));
-    if (last !== null && Date.now() - last < interval) continue;
+    if (!isTriggerDue(wf.trigger, last, now)) continue;
 
     // Mark the attempt BEFORE running so a slow workflow doesn't trigger
     // a duplicate on the next tick.

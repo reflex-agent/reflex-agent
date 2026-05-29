@@ -540,7 +540,8 @@ export interface WorkflowDirective {
   id: string;
   label: string;
   description?: string;
-  trigger?: "manual" | "hourly" | "daily" | "weekly";
+  /** Preset or extended cadence — see lib/reflex/workflow-trigger.ts. */
+  trigger?: string;
   steps: Array<{
     id?: string;
     kind: string;
