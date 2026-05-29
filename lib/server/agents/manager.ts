@@ -1380,9 +1380,10 @@ class AgentManager {
     rootPath: string,
   ): Promise<void> {
     const creates = extractTaskCreates(buf);
+    const reg = await ensureTaskCapabilities();
     for (const c of creates) {
       try {
-        const task = await createTask(rootPath, {
+        const data = {
           title: c.title,
           body: c.body ?? "",
           ...(c.type && isTaskType(c.type) ? { type: c.type } : {}),
@@ -1392,7 +1393,13 @@ class AgentManager {
             : {}),
           ...(Array.isArray(c.labels) ? { labels: c.labels.map(String) } : {}),
           ...(c.parent ? { parent: c.parent } : {}),
-        });
+        };
+        // Phase 4: route through the unified `task.create` capability.
+        const task = await reg.invoke<Awaited<ReturnType<typeof createTask>>>(
+          "task.create",
+          { rootPath, data },
+          { caller: "agent", rootPath },
+        );
         await this.emit({
           type: "task-created",
           taskId: task.id,
@@ -1430,7 +1437,12 @@ class AgentManager {
           patch.labels = u.patch.labels.map(String);
         if (u.patch.assignee !== undefined)
           patch.assignee = u.patch.assignee ?? null;
-        const updated = await updateTask(rootPath, u.id, patch);
+        // Phase 4: route through the unified `task.update` capability.
+        const updated = await reg.invoke<Awaited<ReturnType<typeof updateTask>>>(
+          "task.update",
+          { rootPath, id: u.id, patch },
+          { caller: "agent", rootPath },
+        );
         if (!updated) {
           await this.emit({
             type: "error",
@@ -2292,6 +2304,51 @@ async function ensureSuggestionCapability() {
           entry: Parameters<typeof addSuggestion>[1];
         };
         return addSuggestion(i.rootPath, i.entry);
+      },
+    });
+  }
+  return reg;
+}
+
+/**
+ * Register `task.create` / `task.update` (Phase 4 marker convergence). The
+ * agent's task markers are rootPath-based, distinct from host-api's ctx-based
+ * `tasks.*` (no id collision); each wraps the same createTask/updateTask and
+ * the caller keeps its task-created/updated event — behavior-identical.
+ */
+async function ensureTaskCapabilities() {
+  const { capabilityRegistry } = await import(
+    "@/lib/server/capabilities/registry"
+  );
+  const reg = capabilityRegistry();
+  if (!reg.has("task.create")) {
+    reg.register({
+      kind: "sync",
+      id: "task.create",
+      audit: "event",
+      doc: "Create a task on a project's board.",
+      run: (input) => {
+        const i = input as {
+          rootPath: string;
+          data: Parameters<typeof createTask>[1];
+        };
+        return createTask(i.rootPath, i.data);
+      },
+    });
+  }
+  if (!reg.has("task.update")) {
+    reg.register({
+      kind: "sync",
+      id: "task.update",
+      audit: "event",
+      doc: "Update a task on a project's board.",
+      run: (input) => {
+        const i = input as {
+          rootPath: string;
+          id: string;
+          patch: Parameters<typeof updateTask>[2];
+        };
+        return updateTask(i.rootPath, i.id, i.patch);
       },
     });
   }
