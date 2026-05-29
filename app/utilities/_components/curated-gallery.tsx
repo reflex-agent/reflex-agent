@@ -48,10 +48,14 @@ interface SpaceOpt {
  * the install fires.
  */
 export function CuratedGallery({
-  installedIds,
+  installedGlobal,
+  installedSpaces,
   spaces,
 }: {
-  installedIds: Set<string>;
+  /** Ids of globally-installed utilities. */
+  installedGlobal: string[];
+  /** Per project-utility id → rootIds it's installed in. */
+  installedSpaces: Record<string, string[]>;
   spaces: SpaceOpt[];
 }) {
   const router = useRouter();
@@ -180,7 +184,14 @@ export function CuratedGallery({
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map((item) => {
-          const installed = installedIds.has(item.id);
+          const scope = item.suggestedScope ?? "global";
+          const doneSpaces = installedSpaces[item.id] ?? [];
+          // Project utilities are per-Space: "installed" (button retired) only
+          // once every Space has it. A global utility is installed once.
+          const installed =
+            scope === "global"
+              ? installedGlobal.includes(item.id)
+              : spaces.length > 0 && spaces.every((s) => doneSpaces.includes(s.id));
           const busy = active === item.id && installing;
           return (
             <Card key={item.id} className="group">
@@ -235,19 +246,31 @@ export function CuratedGallery({
                   )}
                   {pickerForId === item.id && (
                     <ul className="mt-2 rounded-md border bg-popover shadow-sm divide-y">
-                      {spaces.map((s) => (
-                        <li key={s.id}>
-                          <button
-                            type="button"
-                            onClick={() => doInstall(item, s.id)}
-                            disabled={busy || installing}
-                            className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-accent disabled:opacity-50 inline-flex items-center gap-1.5"
-                          >
-                            <Download className="h-3 w-3 text-violet-600" />
-                            <span className="truncate">{s.label}</span>
-                          </button>
-                        </li>
-                      ))}
+                      {spaces.map((s) => {
+                        const here = doneSpaces.includes(s.id);
+                        return (
+                          <li key={s.id}>
+                            <button
+                              type="button"
+                              onClick={() => !here && doInstall(item, s.id)}
+                              disabled={here || busy || installing}
+                              className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-accent disabled:hover:bg-transparent inline-flex items-center gap-1.5"
+                            >
+                              {here ? (
+                                <Check className="h-3 w-3 text-emerald-600" />
+                              ) : (
+                                <Download className="h-3 w-3 text-violet-600" />
+                              )}
+                              <span className="truncate">{s.label}</span>
+                              {here && (
+                                <span className="ml-auto text-[10px] text-emerald-700">
+                                  {t("utilities.curated.installed")}
+                                </span>
+                              )}
+                            </button>
+                          </li>
+                        );
+                      })}
                       <li>
                         <button
                           type="button"

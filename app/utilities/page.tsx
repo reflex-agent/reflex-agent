@@ -26,7 +26,15 @@ export default async function UtilitiesPage() {
   ]);
   const globals = utilities.filter((u) => u.scope === "global");
   const projects = utilities.filter((u) => u.scope === "project");
-  const installedIds = new Set(utilities.map((u) => u.manifest.id));
+  // Install state is per-scope: a global utility is installed once; a project
+  // utility is installed PER Space, so the gallery keeps offering it for the
+  // Spaces that don't have it yet.
+  const installedGlobal = globals.map((u) => u.manifest.id);
+  const installedSpaces: Record<string, string[]> = {};
+  for (const u of projects) {
+    if (!u.rootId) continue;
+    (installedSpaces[u.manifest.id] ??= []).push(u.rootId);
+  }
   const spaces = roots.map((r) => ({
     id: r.id,
     label: r.path.split("/").filter(Boolean).pop() ?? r.path,
@@ -56,7 +64,11 @@ export default async function UtilitiesPage() {
         <p className="text-xs text-muted-foreground">
           {t("utilities.catalogSubtitle")}
         </p>
-        <CuratedGallery installedIds={installedIds} spaces={spaces} />
+        <CuratedGallery
+          installedGlobal={installedGlobal}
+          installedSpaces={installedSpaces}
+          spaces={spaces}
+        />
       </section>
 
       <Separator className="my-6" />
