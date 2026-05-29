@@ -1113,8 +1113,43 @@ const WAVEFORM = Array.from(
   (_, i) => 0.3 + 0.7 * Math.abs(Math.sin(i * 1.7) * Math.cos(i * 0.55) + 0.15),
 ).map((h) => Math.min(1, h));
 
-/** Custom audio player widget — circular play/pause, seekable waveform,
- *  elapsed/total time, and a download. Replaces the bare <audio controls>. */
+/** Decode an audio URL into ~`buckets` normalized peak amplitudes (a real
+ *  waveform). Returns null on failure (caller falls back to the pseudo one). */
+async function decodeWaveform(
+  url: string,
+  buckets: number,
+): Promise<number[] | null> {
+  try {
+    const res = await fetch(url);
+    const raw = await res.arrayBuffer();
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext })
+        .webkitAudioContext;
+    const ctx = new Ctx();
+    const audio = await ctx.decodeAudioData(raw);
+    void ctx.close();
+    const data = audio.getChannelData(0);
+    const block = Math.max(1, Math.floor(data.length / buckets));
+    const peaks: number[] = [];
+    for (let i = 0; i < buckets; i++) {
+      let max = 0;
+      const start = i * block;
+      for (let j = 0; j < block && start + j < data.length; j++) {
+        const v = Math.abs(data[start + j] ?? 0);
+        if (v > max) max = v;
+      }
+      peaks.push(max);
+    }
+    const top = Math.max(...peaks, 0.0001);
+    return peaks.map((p) => Math.max(0.08, p / top));
+  } catch {
+    return null;
+  }
+}
+
+/** Custom audio player widget — circular play/pause, a real (decoded)
+ *  scrubbable waveform, elapsed/total time, and a download. */
 function AudioPlayer({
   url,
   name,
@@ -1125,10 +1160,25 @@ function AudioPlayer({
   size: number;
 }) {
   const ref = useRef<HTMLAudioElement>(null);
+  const barsRef = useRef<HTMLDivElement>(null);
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [peaks, setPeaks] = useState<number[] | null>(null);
+  const bars = peaks ?? WAVEFORM;
   const pct = duration ? current / duration : 0;
+
+  // Decode the real waveform once; keep the pseudo-waveform until it lands.
+  useEffect(() => {
+    let cancelled = false;
+    void decodeWaveform(url, 56).then((p) => {
+      if (!cancelled && p) setPeaks(p);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
 
   const toggle = () => {
     const a = ref.current;
@@ -1136,17 +1186,27 @@ function AudioPlayer({
     if (a.paused) void a.play();
     else a.pause();
   };
-  const seekToClientX = (clientX: number, el: HTMLElement) => {
+  const seekToRatio = (ratio: number) => {
     const a = ref.current;
     if (!a || !duration) return;
+    a.currentTime = Math.min(1, Math.max(0, ratio)) * duration;
+    setCurrent(a.currentTime);
+  };
+  const ratioFromX = (clientX: number) => {
+    const el = barsRef.current;
+    if (!el) return 0;
     const r = el.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
-    a.currentTime = ratio * duration;
+    return (clientX - r.left) / r.width;
+  };
+  const nudge = (delta: number) => {
+    const a = ref.current;
+    if (!a) return;
+    a.currentTime = Math.min(duration || 0, Math.max(0, a.currentTime + delta));
     setCurrent(a.currentTime);
   };
 
   return (
-    <div className="flex w-full max-w-md items-center gap-3 rounded-xl border bg-card px-3 py-2.5 shadow-sm">
+    <div className="mt-3 flex w-full max-w-md items-center gap-3 rounded-xl border bg-card px-3 py-3 shadow-sm">
       <audio
         ref={ref}
         src={url}
@@ -1154,14 +1214,16 @@ function AudioPlayer({
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}
-        onTimeUpdate={(e) => setCurrent(e.currentTarget.currentTime)}
+        onTimeUpdate={(e) => {
+          if (!scrubbing) setCurrent(e.currentTarget.currentTime);
+        }}
         onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
       />
       <button
         type="button"
         onClick={toggle}
         aria-label={playing ? "Pause" : "Play"}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white shadow transition hover:bg-violet-700 active:scale-95"
+        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-600 text-white shadow transition hover:bg-violet-700 active:scale-95"
       >
         {playing ? (
           <Pause className="h-4 w-4" />
@@ -1170,7 +1232,7 @@ function AudioPlayer({
         )}
       </button>
       <div className="min-w-0 flex-1">
-        <div className="mb-1 flex items-center justify-between gap-2">
+        <div className="mb-1.5 flex items-center justify-between gap-2">
           <span className="truncate text-xs font-medium" title={name}>
             {name}
           </span>
@@ -1184,18 +1246,45 @@ function AudioPlayer({
           </a>
         </div>
         <div
-          className="flex h-7 cursor-pointer items-center gap-[2px]"
-          onClick={(e) => seekToClientX(e.clientX, e.currentTarget)}
+          ref={barsRef}
+          className="flex h-8 touch-none cursor-pointer items-center gap-[2px]"
           role="slider"
           aria-label="Seek"
+          aria-valuemin={0}
+          aria-valuemax={100}
           aria-valuenow={Math.round(pct * 100)}
           tabIndex={0}
+          onPointerDown={(e) => {
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setScrubbing(true);
+            seekToRatio(ratioFromX(e.clientX));
+          }}
+          onPointerMove={(e) => {
+            if (scrubbing) seekToRatio(ratioFromX(e.clientX));
+          }}
+          onPointerUp={(e) => {
+            setScrubbing(false);
+            try {
+              e.currentTarget.releasePointerCapture(e.pointerId);
+            } catch {
+              /* not captured */
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowRight") {
+              e.preventDefault();
+              nudge(5);
+            } else if (e.key === "ArrowLeft") {
+              e.preventDefault();
+              nudge(-5);
+            }
+          }}
         >
-          {WAVEFORM.map((h, i) => (
+          {bars.map((h, i) => (
             <span
               key={i}
-              className={`flex-1 rounded-full ${
-                i / WAVEFORM.length <= pct
+              className={`flex-1 rounded-full transition-colors ${
+                (i + 0.5) / bars.length <= pct
                   ? "bg-violet-500"
                   : "bg-muted-foreground/25"
               }`}
@@ -1203,7 +1292,7 @@ function AudioPlayer({
             />
           ))}
         </div>
-        <div className="mt-0.5 flex items-center justify-between text-[10px] tabular-nums text-muted-foreground">
+        <div className="mt-1 flex items-center justify-between text-[10px] tabular-nums text-muted-foreground">
           <span>{fmtTime(current)}</span>
           <span>{duration ? fmtTime(duration) : formatBytes(size)}</span>
         </div>
