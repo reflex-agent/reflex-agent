@@ -76,6 +76,17 @@ export async function listGrants(): Promise<Grant[]> {
   return (await readFile()).grants;
 }
 
+export interface GrantView extends Grant {
+  /** Derived: not revoked and not expired. */
+  active: boolean;
+}
+
+/** Grants with a derived `active` flag — for the Settings → Sharing surface. */
+export async function listGrantViews(): Promise<GrantView[]> {
+  const now = Date.now();
+  return (await listGrants()).map((g) => ({ ...g, active: grantActive(g, now) }));
+}
+
 /**
  * Resolve a live grant authorizing `consumer` to access `(provider, plane,
  * selector)` within `scope`. Returns null when none applies.

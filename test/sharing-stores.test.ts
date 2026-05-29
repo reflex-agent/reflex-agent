@@ -139,6 +139,23 @@ describe("grant-store", () => {
     ).toBeNull();
   });
 
+  it("listGrantViews derives an active flag (revoked/expired -> false)", async () => {
+    const gs = await import("@/lib/server/utilities/grant-store");
+    const live = await gs.createGrant({ consumer: "w", provider: "p", plane: "data", selector: "task", scope: "global" });
+    const expired = await gs.createGrant({
+      consumer: "w",
+      provider: "q",
+      plane: "data",
+      selector: "task",
+      scope: "global",
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    await gs.revokeGrant(live.id);
+    const views = await gs.listGrantViews();
+    expect(views.find((v) => v.id === live.id)?.active).toBe(false); // revoked
+    expect(views.find((v) => v.id === expired.id)?.active).toBe(false); // expired
+  });
+
   it("prunes all grants touching an uninstalled utility", async () => {
     const gs = await import("@/lib/server/utilities/grant-store");
     await gs.createGrant({ consumer: "w", provider: "p", plane: "data", selector: "task", scope: "global" });
