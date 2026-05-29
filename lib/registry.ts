@@ -81,7 +81,25 @@ async function readFile(): Promise<RegistryFile> {
       "entries" in parsed &&
       Array.isArray((parsed as { entries: unknown }).entries)
     ) {
-      return parsed as RegistryFile;
+      const file = parsed as RegistryFile;
+      // rootRef migration (additive, self-healing): backfill a stable ref for
+      // entries that predate it, so existing Spaces get a path-independent id.
+      // Write-once — after backfill every entry has a ref, so no further writes.
+      let changed = false;
+      for (const e of file.entries) {
+        if (!e.ref) {
+          e.ref = newRef();
+          changed = true;
+        }
+      }
+      if (changed) {
+        try {
+          await writeJsonFile(REGISTRY_FILE, file);
+        } catch {
+          /* best-effort backfill; resolution still works by id */
+        }
+      }
+      return file;
     }
     return EMPTY;
   } catch (err: unknown) {

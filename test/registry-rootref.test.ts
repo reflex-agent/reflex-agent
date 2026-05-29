@@ -58,4 +58,30 @@ describe("registry rootRef dual-read", () => {
   it("newRef() is unique per call", () => {
     expect(reg.newRef()).not.toBe(reg.newRef());
   });
+
+  it("backfills a ref for entries that predate rootRef, persisting it", async () => {
+    // Simulate a legacy registry entry with no `ref`.
+    const legacyDir = await fs.mkdtemp(path.join(home, "legacy-"));
+    const regFile = path.join(home, "registry.json");
+    await fs.writeFile(
+      regFile,
+      JSON.stringify({
+        entries: [
+          { id: "legacyid00000000", path: legacyDir, addedAt: new Date(0).toISOString() },
+        ],
+      }),
+      "utf8",
+    );
+    const [entry] = await reg.listRoots(); // read → backfill
+    expect(entry!.id).toBe("legacyid00000000");
+    expect(entry!.ref).toMatch(/^[0-9a-f]{16}$/);
+    // Persisted to disk (not just in-memory).
+    const onDisk = JSON.parse(await fs.readFile(regFile, "utf8"));
+    const persisted = onDisk.entries.find(
+      (e: { id: string; ref?: string }) => e.id === "legacyid00000000",
+    );
+    expect(persisted.ref).toBe(entry!.ref);
+    // And it resolves by that backfilled ref.
+    expect((await reg.getRoot(entry!.ref!))?.id).toBe("legacyid00000000");
+  });
 });
