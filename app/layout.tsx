@@ -35,9 +35,11 @@ export default async function RootLayout({
     <html lang={locale} suppressHydrationWarning>
       <body>
         <NextIntlClientProvider locale={locale} messages={messages}>
-          <div className="h-screen flex">
+          <div className="h-screen flex overflow-hidden">
             <AppSidebar initialRoots={roots} />
-            <main className="flex-1 min-w-0 flex flex-col">{children}</main>
+            <main className="flex-1 min-w-0 flex flex-col overflow-y-auto">
+              {children}
+            </main>
           </div>
           <Toaster richColors closeButton />
         </NextIntlClientProvider>
