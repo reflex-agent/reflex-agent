@@ -1039,34 +1039,18 @@ function SystemUserTurn({ system }: { system: SystemUserMessage }) {
 function stripProtocolMarkers(text: string): string {
   // Accept both `<<reflex:X>>` and a typo'd `<reflex:X>` on either end —
   // mirrors the lenient extractor in lib/server/agents/protocol.ts.
-  const tags = [
-    "permission",
-    "question",
-    "kb",
-    "utility",
-    "dispatch",
-    "mcp-add",
-    "youtube-summary",
-    "widget-create",
-    "widget-update",
-    "workflow-create",
-    "image-gen",
-    "memory",
-    "suggestion",
-    "onboarding-done",
-    "skill-create",
-    "task-create",
-    "task-update",
-  ];
-  let out = text;
-  for (const t of tags) {
-    const re = new RegExp(
-      `<{1,2}reflex:${t}>{1,2}[\\s\\S]*?<{1,2}\\/reflex:${t}>{1,2}`,
-      "g",
-    );
-    out = out.replace(re, "");
-  }
-  return out;
+  return (
+    text
+      // Any <<reflex:NAME>>…<</reflex:NAME>> marker (open/close matched via the
+      // backreference) — was a hand-maintained tag list that silently leaked
+      // newer markers like `route` / `report` / `notify`.
+      .replace(
+        /<{1,2}reflex:([a-z][a-z0-9-]*)>{1,2}[\s\S]*?<{1,2}\/reflex:\1>{1,2}/g,
+        "",
+      )
+      // A trailing, not-yet-closed marker (mid-stream) so it doesn't flash.
+      .replace(/<{1,2}reflex:[a-z][a-z0-9-]*>{1,2}[\s\S]*$/g, "")
+  );
 }
 
 interface SSEEvent {

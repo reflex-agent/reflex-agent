@@ -244,7 +244,7 @@ class AgentManager {
   // ---------------------------------------------------------------------
 
   /** Run a single turn under an existing agent. Fire-and-forget. */
-  async invoke(args: InvokeArgs): Promise<void> {
+  async invoke(args: InvokeArgs): Promise<string> {
     const state = this.agents.get(args.agentId);
     if (!state) throw new Error(`Agent not found: ${args.agentId}`);
     if (state.meta.status === "running") {
@@ -257,6 +257,10 @@ class AgentManager {
     });
     state.lastUserMessage = args.userMessage ?? args.prompt;
     this.turnText.set(args.agentId, "");
+    // Captured before the `finally` clears turnText, so callers (e.g.
+    // dispatchSubAgents) can read the turn's text from the return value
+    // instead of the already-deleted map.
+    let turnResult = "";
     const turnId = shortId();
     // Emit the user message first so the projector renders it above the
     // assistant block. `turn-start` then opens the assistant's response.
@@ -318,6 +322,9 @@ class AgentManager {
       // BEFORE turn-end, so the image appears inside the current assistant
       // bubble (not as a separate bubble below).
       await this.applyImageGenDirectives(args.agentId);
+      // Snapshot the turn's text now (fully streamed) — the `finally` deletes
+      // the live buffer, so this is what invoke() returns.
+      turnResult = (this.turnText.get(args.agentId) ?? "").trim();
       // Decide whether /goal mode requires another automatic turn.
       // Reads `turnText` (still populated) and inspects it for
       // GOAL ACHIEVED / pending-human markers — directive *emission* is
@@ -417,6 +424,7 @@ class AgentManager {
     } finally {
       this.turnText.delete(args.agentId);
     }
+    return turnResult;
   }
 
   /**
@@ -923,8 +931,9 @@ class AgentManager {
         });
         const userMessage = d.brief;
         const prompt = `${userMessage}\n\n### assistant\n(Reply now.)`;
+        let subOutput = "";
         try {
-          await this.invoke({
+          subOutput = await this.invoke({
             agentId: subId,
             systemPrompt,
             prompt,
@@ -949,9 +958,8 @@ class AgentManager {
             error: msg,
           };
         }
-        const output = (this.turnText.get(subId) ?? "").trim();
         await this.destroy(subId, "completed");
-        return { role: roleId, id: d.id ?? subId, brief: d.brief, output };
+        return { role: roleId, id: d.id ?? subId, brief: d.brief, output: subOutput };
       }),
     );
 
