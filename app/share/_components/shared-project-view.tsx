@@ -1,6 +1,7 @@
 import { LayoutDashboard, Share2 } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import type { DashboardLayout, WidgetRecord } from "@/lib/server/widgets/types";
+import { ReadonlyWidget } from "./readonly-widget";
 
 /**
  * Read-only project dashboard view. We don't reuse the full Dashboard
@@ -63,9 +64,7 @@ export async function SharedProjectView({
                     </p>
                   )}
                 </header>
-                <p className="text-[11px] text-muted-foreground font-mono">
-                  kind: {w.kind} · id: {w.id}
-                </p>
+                <ReadonlyWidget kind={w.kind} data={w.data} />
               </article>
             ))}
           </div>
