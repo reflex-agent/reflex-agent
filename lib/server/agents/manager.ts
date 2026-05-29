@@ -2194,13 +2194,10 @@ export const agentManager: AgentManager =
   globalThis.__reflexAgentManager ?? new AgentManager();
 globalThis.__reflexAgentManager = agentManager;
 
-// Kick the widget auto-refresh scheduler. Dynamic import keeps the file
-// from being eagerly evaluated during the manager's own module-init
-// (which would create a circular ref via start-turn → manager).
-void import("@/lib/server/widgets/scheduler")
-  .then((mod) => mod.startWidgetScheduler())
-  .catch((err) => {
-    console.error("[widget-scheduler] failed to start:", err);
-  });
+// NOTE: the widget auto-refresh scheduler is NOT started here anymore — it's
+// registered on the shared BackgroundRuntime from the instrumentation boot hook
+// (lib/server/instrumentation.ts). Starting it from this module-init ran it in
+// every `next dev` render-worker process (separate globalThis), the same
+// multi-process hazard that double-started the Telegram poller.
 
 export type { AgentManager };

@@ -11,6 +11,7 @@ import {
   type WidgetRecord,
 } from "./types";
 import { buildRefreshPromptForWidget } from "./scheduler-bridge";
+import { backgroundRuntime } from "../runtime/background-runtime";
 
 /**
  * Auto-refresh scheduler for widgets with `refresh` != "manual".
@@ -30,73 +31,32 @@ import { buildRefreshPromptForWidget } from "./scheduler-bridge";
  */
 
 const TICK_MS = 5 * 60 * 1000; // 5 min
-const SINGLETON_KEY = "__reflexWidgetScheduler" as const;
+export const WIDGET_JOB_ID = "widget-refresh";
 
-interface SchedulerState {
-  intervalId: ReturnType<typeof setInterval> | null;
-  ticking: boolean;
-  startedAt: string;
-}
-
-declare global {
-  // eslint-disable-next-line no-var
-  var __reflexWidgetScheduler: SchedulerState | undefined;
-}
-
-function getState(): SchedulerState {
-  if (!globalThis[SINGLETON_KEY]) {
-    globalThis[SINGLETON_KEY] = {
-      intervalId: null,
-      ticking: false,
-      startedAt: new Date().toISOString(),
-    };
-  }
-  return globalThis[SINGLETON_KEY]!;
-}
-
+/**
+ * Register the widget-refresh pass on the shared BackgroundRuntime (Phase 5 —
+ * one loop for all periodic work). Idempotent. The runtime owns the timer +
+ * overlap guard; we seed last-run to "now" so a fresh boot doesn't hammer every
+ * widget while modules are still settling (preserves the old stagger intent).
+ */
 export function startWidgetScheduler(): void {
-  const state = getState();
-  if (state.intervalId) return;
-  // Stagger the first tick by ~30s so a fresh dev-server start doesn't
-  // hammer everything immediately while modules are still settling.
-  setTimeout(() => {
-    void runOnce().catch((err) => {
-      console.error("[widget-scheduler] initial tick failed:", err);
-    });
-  }, 30_000);
-  state.intervalId = setInterval(() => {
-    void runOnce().catch((err) => {
-      console.error("[widget-scheduler] tick failed:", err);
-    });
-  }, TICK_MS);
-}
-
-export function stopWidgetScheduler(): void {
-  const state = getState();
-  if (state.intervalId) {
-    clearInterval(state.intervalId);
-    state.intervalId = null;
-  }
+  const rt = backgroundRuntime();
+  if (rt.has(WIDGET_JOB_ID)) return;
+  rt.register({ id: WIDGET_JOB_ID, intervalMs: TICK_MS, run: runOnce });
+  rt.seedLastRun(WIDGET_JOB_ID, Date.now());
 }
 
 async function runOnce(): Promise<void> {
-  const state = getState();
-  if (state.ticking) return;
-  state.ticking = true;
-  try {
-    const roots = await listRoots();
-    for (const root of roots) {
-      try {
-        await processRoot(root.id, root.path);
-      } catch (err) {
-        console.error(
-          `[widget-scheduler] root ${root.id} failed:`,
-          err instanceof Error ? err.message : err,
-        );
-      }
+  const roots = await listRoots();
+  for (const root of roots) {
+    try {
+      await processRoot(root.id, root.path);
+    } catch (err) {
+      console.error(
+        `[widget-scheduler] root ${root.id} failed:`,
+        err instanceof Error ? err.message : err,
+      );
     }
-  } finally {
-    state.ticking = false;
   }
 }
 

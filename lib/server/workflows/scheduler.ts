@@ -3,6 +3,7 @@ import { listRoots, type RegistryEntry } from "@/lib/registry";
 import { listWorkflows, listRuns } from "./store";
 import { runWorkflow } from "./runner";
 import { SYSTEM_TASKS, SYSTEM_TASK_INTERVAL_MS } from "./system-tasks";
+import { backgroundRuntime } from "@/lib/server/runtime/background-runtime";
 import type { WorkflowDef, WorkflowTrigger } from "./types";
 
 /**
@@ -30,14 +31,7 @@ const INTERVAL_MS: Record<WorkflowTrigger, number | null> = {
   weekly: 7 * 24 * 60 * 60 * 1000,
 };
 
-// Tracked across the whole process so HMR doesn't double-boot.
-declare global {
-  // eslint-disable-next-line no-var
-  var __reflexWorkflowScheduler: SchedulerHandle | undefined;
-}
-
 interface SchedulerHandle {
-  timer: ReturnType<typeof setInterval>;
   running: boolean;
   /** Per (rootId, workflowId) — wall clock of the last attempt the
    *  scheduler dispatched, regardless of run success. Falls back to the
@@ -49,29 +43,24 @@ function key(rootId: string, workflowId: string): string {
   return `${rootId}::${workflowId}`;
 }
 
-export function startScheduler(): void {
-  if (globalThis.__reflexWorkflowScheduler) return;
-  const handle: SchedulerHandle = {
-    running: false,
-    lastFired: new Map(),
-    timer: setInterval(() => {
-      void tick(handle);
-    }, TICK_INTERVAL_MS),
-  };
-  // Fire once shortly after boot so the user doesn't wait a full minute
-  // for the first pass on a freshly-started Reflex.
-  setTimeout(() => void tick(handle), 5_000).unref?.();
-  // Don't keep the Node process alive solely for this — when the server
-  // shuts down the timer goes with it.
-  handle.timer.unref?.();
-  globalThis.__reflexWorkflowScheduler = handle;
-}
+export const WORKFLOW_JOB_ID = "workflow-scheduler";
 
-export function stopScheduler(): void {
-  const handle = globalThis.__reflexWorkflowScheduler;
-  if (!handle) return;
-  clearInterval(handle.timer);
-  globalThis.__reflexWorkflowScheduler = undefined;
+/**
+ * Register the workflow / system-task / dispatcher-compaction pass on the
+ * shared BackgroundRuntime (Phase 5 — one loop for all periodic work).
+ * Idempotent. The runtime owns the timer + overlap guard; the per-(root,
+ * workflow) `lastFired` cadence map lives on a module handle so individual
+ * trigger intervals (hourly/daily/weekly) are preserved.
+ */
+export function startScheduler(): void {
+  const rt = backgroundRuntime();
+  if (rt.has(WORKFLOW_JOB_ID)) return;
+  const handle: SchedulerHandle = { running: false, lastFired: new Map() };
+  rt.register({
+    id: WORKFLOW_JOB_ID,
+    intervalMs: TICK_INTERVAL_MS,
+    run: () => tick(handle),
+  });
 }
 
 async function tick(handle: SchedulerHandle): Promise<void> {

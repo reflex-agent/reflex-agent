@@ -37,6 +37,10 @@ export class BackgroundRuntime {
     this.lastRun.set(id, at);
   }
 
+  has(id: string): boolean {
+    return this.jobs.has(id);
+  }
+
   jobIds(): string[] {
     return [...this.jobs.keys()].sort();
   }
