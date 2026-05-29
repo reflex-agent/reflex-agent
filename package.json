@@ -5,13 +5,13 @@
   "description": "Local-first knowledge base built by an agent over a chosen directory.",
   "license": "MIT",
   "author": "legostin",
-  "homepage": "https://github.com/legostin/reflex-agent#readme",
+  "homepage": "https://github.com/reflex-agent/reflex-agent#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/legostin/reflex-agent.git"
+    "url": "git+https://github.com/reflex-agent/reflex-agent.git"
   },
   "bugs": {
-    "url": "https://github.com/legostin/reflex-agent/issues"
+    "url": "https://github.com/reflex-agent/reflex-agent/issues"
   },
   "type": "module",
   "bin": {

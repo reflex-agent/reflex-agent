@@ -6,7 +6,7 @@ Task management in Reflex is split across two pieces:
   `reflex.git.worktree.*` host methods, the `<<reflex:task-create>>` /
   `<<reflex:task-update>>` markers, the `task-question` pending kind,
   and `TopicFrontmatter.taskId`.
-- **The `task-board` utility** (`legostin/rflx-task-board`, shipped via
+- **The `task-board` utility** (`reflex-agent/rflx-task-board`, shipped via
   curated registry): the Kanban UI, board ordering, attachments, the
   auto-pickup workflow, settings, dashboard KPI card.
 

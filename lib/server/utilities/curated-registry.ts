@@ -6,7 +6,7 @@ import { reflexHome } from "@/lib/reflex/home";
 /**
  * Curated catalogue of utilities Reflex blesses for one-tap install.
  * Two-tier source: inline baseline ships with the binary (offline-safe);
- * a daily fetch from `reflex-org/utility-registry` raw content overlays
+ * a daily fetch from `reflex-agent/utility-registry` raw content overlays
  * a newer list when the network's there. Either way the UI never sees
  * an empty grid on a fresh install.
  *
@@ -36,9 +36,9 @@ const INLINE_BASELINE: CuratedUtility[] = [
     category: "study",
     description:
       "Universal AI tutor. Say \"I want to learn X\" — it builds a course for your level: syllabus, articles, videos, diagrams, quizzes, homework, and interactive drills.",
-    github: "github:legostin/rflx-learn-anything@v0.6.0",
+    github: "github:reflex-agent/rflx-learn-anything@v0.6.0",
     suggestedScope: "project",
-    author: "reflex-org",
+    author: "reflex-agent",
   },
   {
     id: "task-board",
@@ -47,15 +47,15 @@ const INLINE_BASELINE: CuratedUtility[] = [
     category: "productivity",
     description:
       "Kanban tracker with /task, /tasks, /take-task commands. Each code task gets its own git worktree on dispatch so parallel agents never collide. Auto-pickup, PR mode, pre/post hooks.",
-    github: "github:legostin/rflx-task-board@v0.7.1",
+    github: "github:reflex-agent/rflx-task-board@v0.7.1",
     suggestedScope: "project",
-    author: "reflex-org",
+    author: "reflex-agent",
   },
 ];
 
 const CACHE_PATH = path.join(reflexHome(), "curated-registry.json");
 const REMOTE_URL =
-  "https://raw.githubusercontent.com/reflex-org/utility-registry/main/index.json";
+  "https://raw.githubusercontent.com/reflex-agent/utility-registry/main/index.json";
 const MAX_CACHE_AGE_MS = 24 * 60 * 60 * 1000;
 
 interface CachedRegistry {

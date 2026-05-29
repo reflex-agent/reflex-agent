@@ -7,8 +7,8 @@ modifying core.
 
 Examples that ship in the curated registry:
 
-- `learn-anything` (separate repo `legostin/rflx-learn-anything`)
-- `task-board` (separate repo `legostin/rflx-task-board`)
+- `learn-anything` (separate repo `reflex-agent/rflx-learn-anything`)
+- `task-board` (separate repo `reflex-agent/rflx-task-board`)
 
 ## Anatomy
 
