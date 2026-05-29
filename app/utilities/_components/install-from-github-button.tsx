@@ -167,6 +167,8 @@ export function InstallFromGithubButton() {
               <PermissionsView permissions={preview.manifest.permissions} />
             </div>
 
+            <CrossUtilityView manifest={preview.manifest} />
+
             {preview.manifest.dependencies &&
               Object.keys(preview.manifest.dependencies).length > 0 && (
                 <div>
@@ -281,6 +283,16 @@ function PermissionsView({ permissions }: { permissions: Permissions }) {
     chips.push({ label: "audit.write", severity: "info" });
   if (permissions.workers?.enabled)
     chips.push({ label: "workers (server actions)", severity: "danger" });
+  if (permissions.tasks?.dispatch)
+    chips.push({ label: "tasks.dispatch (runs agents)", severity: "danger" });
+  if (permissions.tasks?.write)
+    chips.push({ label: "tasks.write", severity: "warn" });
+  if (permissions.tasks?.read)
+    chips.push({ label: "tasks.read", severity: "info" });
+  if (permissions.worktree)
+    chips.push({ label: "git worktree (mutates repo)", severity: "danger" });
+  if (permissions.shares?.consume)
+    chips.push({ label: "shares.consume (cross-utility)", severity: "warn" });
   if (chips.length === 0) {
     return (
       <span className="text-xs italic text-muted-foreground">
@@ -305,6 +317,58 @@ function PermissionsView({ permissions }: { permissions: Permissions }) {
           {c.label}
         </Badge>
       ))}
+    </div>
+  );
+}
+
+function CrossUtilityView({
+  manifest,
+}: {
+  manifest: { provides: Manifest["provides"]; consumes: Manifest["consumes"] };
+}) {
+  const provides = [
+    ...manifest.provides.data.map((d) => `data:${d.kind}`),
+    ...manifest.provides.capabilities.map((v) => `verb:${v.verb}`),
+  ];
+  const consumes = [
+    ...manifest.consumes.data.map((d) => `${d.provider ?? "any"}/${d.kind}`),
+    ...manifest.consumes.capabilities.map((v) => `${v.provider ?? "any"}:${v.verb}`),
+  ];
+  if (provides.length === 0 && consumes.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {provides.length > 0 && (
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">
+            Provides (other utilities may request)
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {provides.map((x) => (
+              <Badge key={x} variant="outline" className="font-mono text-[10px]">
+                {x}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+      {consumes.length > 0 && (
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground mb-1">
+            May request access to (you approve on first use)
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {consumes.map((x) => (
+              <Badge
+                key={x}
+                variant="outline"
+                className="border-amber-600 text-amber-700 font-mono text-[10px]"
+              >
+                {x}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
