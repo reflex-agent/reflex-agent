@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,
@@ -93,6 +94,7 @@ export function SettingsForm({ initialSettings, harnesses }: Props) {
     ollama: null,
   });
   const [saving, startSaving] = useTransition();
+  const [tab, setTab] = useState("general");
 
   const refreshModels = useCallback(async (id: HarnessId) => {
     setLoading((l) => ({ ...l, [id]: true }));
@@ -225,6 +227,24 @@ export function SettingsForm({ initialSettings, harnesses }: Props) {
           </Button>
         </CardContent>
       </Card>
+
+      <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+        <TabsList className="flex-wrap">
+          <TabsTrigger value="general">General</TabsTrigger>
+          {isAdvanced && (
+            <TabsTrigger value="agents">Agents &amp; models</TabsTrigger>
+          )}
+          <TabsTrigger value="integrations">Integrations</TabsTrigger>
+          <TabsTrigger value="comms">Notifications &amp; sharing</TabsTrigger>
+          {isAdvanced && <TabsTrigger value="advanced">Advanced</TabsTrigger>}
+        </TabsList>
+
+        <TabsContent value="general" className="space-y-8">
+          <p className="text-sm text-muted-foreground">
+            Your profile and how the agent reads &amp; writes: what Reflex
+            remembers about you, the language it works in, and how it handles
+            images you add.
+          </p>
       <section>
         <h2 className="text-lg font-semibold mb-3">Memory</h2>
         <MemoryEditor
@@ -384,6 +404,14 @@ export function SettingsForm({ initialSettings, harnesses }: Props) {
         </Card>
       </section>
 
+        </TabsContent>
+
+        <TabsContent value="agents" className="space-y-8">
+          <p className="text-sm text-muted-foreground">
+            Which coding agents are enabled (Claude Code, Codex, Ollama) and
+            which model handles each kind of task — chat, analysis, RAG,
+            embeddings, and quick calls.
+          </p>
       {isAdvanced && (
       <section>
         <h2 className="text-lg font-semibold mb-3">Harnesses</h2>
@@ -596,6 +624,14 @@ export function SettingsForm({ initialSettings, harnesses }: Props) {
       </section>
       )}
 
+        </TabsContent>
+
+        <TabsContent value="integrations" className="space-y-8">
+          <p className="text-sm text-muted-foreground">
+            External services Reflex may call, each opt-in: Gemini, web image
+            search, OAuth providers (Google, etc.), MCP tool servers, and map
+            services for the dashboard map widget.
+          </p>
       <section>
         <h2 className="text-lg font-semibold mb-3">Gemini</h2>
         <GeminiSection />
@@ -641,6 +677,15 @@ export function SettingsForm({ initialSettings, harnesses }: Props) {
         />
       </section>
 
+        </TabsContent>
+
+        <TabsContent value="comms" className="space-y-8">
+          <p className="text-sm text-muted-foreground">
+            How Reflex reaches you and how utilities reach each other: Telegram
+            notifications (scheduler / workflow / agent output you can reply to),
+            an ngrok tunnel to expose the UI, and the Share Plane grants
+            utilities hold on each other&apos;s data.
+          </p>
       <section>
         <h2 className="text-lg font-semibold mb-3">Notifications</h2>
         <p className="text-sm text-muted-foreground mb-3">
@@ -676,6 +721,14 @@ export function SettingsForm({ initialSettings, harnesses }: Props) {
         />
       </section>
 
+        </TabsContent>
+
+        <TabsContent value="advanced" className="space-y-8">
+          <p className="text-sm text-muted-foreground">
+            Power-user internals. Edit the raw prompt templates Reflex sends to
+            the agent — stored on disk under <code>~/.reflex/prompts/</code>,
+            change with care.
+          </p>
       {isAdvanced && (
       <section>
         <h2 className="text-lg font-semibold mb-3">Prompt templates</h2>
@@ -688,6 +741,9 @@ export function SettingsForm({ initialSettings, harnesses }: Props) {
         <PromptTemplatesEditor />
       </section>
       )}
+
+        </TabsContent>
+      </Tabs>
 
       <div className="flex justify-end">
         <Button onClick={save} disabled={saving}>
