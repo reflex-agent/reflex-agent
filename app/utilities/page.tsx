@@ -87,9 +87,11 @@ export default async function UtilitiesPage() {
             utilities={globals}
           />
           <Separator className="my-8" />
+          {/* projectHint uses t.raw: it has a literal "<root>" that ICU
+              MessageFormat would otherwise read as an unclosed tag. */}
           <Section
             title={t("utilities.projectTitle")}
-            hint={t("utilities.projectHint")}
+            hint={String(t.raw("utilities.projectHint"))}
             utilities={projects}
           />
         </>

@@ -23,9 +23,14 @@ export function InstallViaAgentButton() {
   const [url, setUrl] = useState("");
   const [copied, setCopied] = useState(false);
 
-  const prompt = t("utilities.viaAgent.promptBody", {
-    url: url.trim() || "<github URL here>",
-  });
+  // Use t.raw (no ICU parsing): the prompt body intentionally contains
+  // `<<reflex:utility>>{...}` / `<<reflex:question>>` markers and literal
+  // braces that ICU MessageFormat would reject (INVALID_TAG). Interpolate
+  // {url} ourselves.
+  const prompt = String(t.raw("utilities.viaAgent.promptBody")).replace(
+    /\{url\}/g,
+    url.trim() || "<github URL here>",
+  );
 
   const copy = async () => {
     await navigator.clipboard.writeText(prompt);
