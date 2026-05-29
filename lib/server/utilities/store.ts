@@ -12,6 +12,8 @@ import {
   type ServerAction,
   type UtilityScope,
 } from "./types";
+import { rebuildProviderDirectory, type ProviderInput } from "./provider-directory";
+import { pruneGrantsForUtility } from "./grant-store";
 
 const DISCOVERED_ACTION_TIMEOUT_MS = 30_000;
 
@@ -207,6 +209,28 @@ export async function resolveUtility(
   return getUtility("global", id);
 }
 
+/**
+ * Rebuild the Share Plane provider directory from every installed utility
+ * (global + all project roots). Called after install/uninstall so discovery
+ * and kind-ownership stay current. Best-effort — the directory is self-healing
+ * and host methods also refresh it on read.
+ */
+async function refreshSharingDirectory(): Promise<void> {
+  try {
+    const utils = await listUtilities({});
+    const inputs: ProviderInput[] = utils.map((u) => ({
+      id: u.manifest.id,
+      scope: u.scope,
+      ...(u.rootId ? { rootId: u.rootId } : {}),
+      version: u.manifest.version,
+      provides: u.manifest.provides,
+    }));
+    await rebuildProviderDirectory(inputs);
+  } catch (err) {
+    console.error("[sharing] provider directory refresh failed:", err);
+  }
+}
+
 export async function installUtility(
   spec: InstallSpec,
 ): Promise<InstalledUtility> {
@@ -275,6 +299,10 @@ export async function installUtility(
       console.error("[utility install] card seed failed:", err);
     }
   }
+
+  // Refresh the provider directory so a newly-installed provider's data kinds
+  // + exported capabilities are immediately discoverable (Share Plane).
+  await refreshSharingDirectory();
 
   return {
     scope: spec.scope,
@@ -365,4 +393,8 @@ export async function removeUtility(
   }
   const dir = utilityDir(scope, id, rootPath);
   await fs.rm(dir, { recursive: true, force: true });
+  // Drop grants touching this utility and refresh the directory so an orphaned
+  // grant or stale kind-ownership can't outlive the utility (Share Plane).
+  await pruneGrantsForUtility(id);
+  await refreshSharingDirectory();
 }

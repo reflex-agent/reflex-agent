@@ -89,19 +89,20 @@ describe("host-api method surface (utility ABI golden snapshot)", () => {
 
 /**
  * Security regression: tasks.* and git.worktree.* spawn subprocess agents and
- * mutate the user's real git repo. They are documented (docs/host-api.md) as
- * "task-board utility only" and must be hard-gated at dispatchHostCall until
- * real permission slots replace the id check. A regression here = any installed
- * utility regains the privilege-escalation path. Source-extracted (no import)
- * to match the snapshot test above.
+ * mutate the user's real git repo. They are gated by a real permission slot
+ * (permissions.tasks / permissions.worktree) at dispatchHostCall — fix B,
+ * which replaced the original task-board-only id-gate. A regression here = any
+ * installed utility regains the privilege-escalation path. Source-extracted
+ * (no import) to match the snapshot test above.
  */
 function extractGatedMethods(): string[] {
   const src = readFileSync(SRC, "utf8");
-  const start = src.indexOf("const TASK_BOARD_ONLY_METHODS = new Set([");
-  const end = src.indexOf("]);", start);
+  const start = src.indexOf("const SENSITIVE_METHOD_SLOTS");
+  const end = src.indexOf("};", start);
   const block = start >= 0 && end > start ? src.slice(start, end) : "";
   const ids = new Set<string>();
-  const re = /"([^"]+)"/g;
+  // method key -> slot value ("tasks.*" | "worktree")
+  const re = /"([^"]+)":\s*"(?:tasks\.|worktree)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(block)) !== null) ids.add(m[1]!);
   return [...ids].sort((a, b) => a.localeCompare(b));
@@ -122,11 +123,11 @@ describe("host-api sensitive-capability gate (security)", () => {
     expect(gated.has("git.hasGhCli")).toBe(false);
   });
 
-  it("enforces the gate in dispatchHostCall with a task-board id check", () => {
+  it("enforces the gate via a permission slot, not a hard-coded id", () => {
     const src = readFileSync(SRC, "utf8");
-    expect(src).toMatch(/TASK_BOARD_ONLY_METHODS\.has\(method\)/);
-    expect(src).toMatch(
-      /ctx\.utility\.manifest\.id\s*!==\s*"task-board"/,
-    );
+    expect(src).toMatch(/SENSITIVE_METHOD_SLOTS\[method\]/);
+    expect(src).toMatch(/hasSensitiveSlot\(/);
+    // keeps an explicit back-compat shim for an un-upgraded task-board
+    expect(src).toMatch(/isLegacyTaskBoard\(/);
   });
 });

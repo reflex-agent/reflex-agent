@@ -17,6 +17,7 @@ import {
   listProviders as listProviderEntries,
   findProviderCapability,
   rebuildProviderDirectory,
+  getKindOwner,
   type ProviderInput,
 } from "./provider-directory";
 import { quickComplete } from "@/lib/server/quick";
@@ -474,31 +475,58 @@ function ensureHostMethodsRegistered(): void {
 /**
  * Sensitive host methods that spawn subprocess agents (tasks.dispatch → a real
  * Claude Code / Codex child process) or mutate the user's real git repository
- * (git.worktree.*). docs/host-api.md documents these as "task-board utility
- * only", but the handlers carried NO id/permission check, so any installed
- * utility could call them — a privilege-escalation hole. This restores the
- * documented gate at the single utility entry point (dispatchHostCall covers
- * both the iframe route and the worker proxy). Read-only git.isRepo /
+ * (git.worktree.*). Each is gated by a real permission slot the utility
+ * REQUESTS and the user consents to at install (fix B — see docs/sharing.md),
+ * which replaced the original task-board-only id-gate. Read-only git.isRepo /
  * hasRemote / hasGhCli stay open (documented as "always").
- *
- * TEMPORARY: replace with real permission slots (permissions.tasks /
- * permissions.worktree) + install-time consent — see the core roadmap. Until
- * then this hard-coded id-gate is the security boundary.
  */
-const TASK_BOARD_ONLY_METHODS = new Set([
-  "tasks.create",
-  "tasks.update",
-  "tasks.delete",
-  "tasks.get",
-  "tasks.list",
-  "tasks.dispatch",
-  "tasks.observe",
-  "tasks.complete",
-  "git.worktree.create",
-  "git.worktree.merge",
-  "git.worktree.remove",
-  "git.worktree.list",
-]);
+const SENSITIVE_METHOD_SLOTS: Record<
+  string,
+  "tasks.read" | "tasks.write" | "tasks.dispatch" | "worktree"
+> = {
+  "tasks.get": "tasks.read",
+  "tasks.list": "tasks.read",
+  "tasks.observe": "tasks.read",
+  "tasks.create": "tasks.write",
+  "tasks.update": "tasks.write",
+  "tasks.delete": "tasks.write",
+  "tasks.complete": "tasks.write",
+  "tasks.dispatch": "tasks.dispatch",
+  "git.worktree.create": "worktree",
+  "git.worktree.merge": "worktree",
+  "git.worktree.remove": "worktree",
+  "git.worktree.list": "worktree",
+};
+
+function hasSensitiveSlot(
+  manifest: Manifest,
+  slot: "tasks.read" | "tasks.write" | "tasks.dispatch" | "worktree",
+): boolean {
+  const p = manifest.permissions;
+  switch (slot) {
+    case "tasks.read":
+      return !!p.tasks?.read;
+    case "tasks.write":
+      return !!p.tasks?.write;
+    case "tasks.dispatch":
+      return !!p.tasks?.dispatch;
+    case "worktree":
+      return !!p.worktree;
+  }
+}
+
+/**
+ * Back-compat shim: an un-upgraded task-board (declares none of the new
+ * sensitive slots) keeps working while the slot becomes the real boundary for
+ * every other utility. Remove once task-board ships its slot declarations.
+ */
+function isLegacyTaskBoard(manifest: Manifest): boolean {
+  return (
+    manifest.id === "task-board" &&
+    !manifest.permissions.tasks &&
+    !manifest.permissions.worktree
+  );
+}
 
 export async function dispatchHostCall(
   ctx: HostContext,
@@ -520,14 +548,17 @@ export async function dispatchHostCall(
     if (!capabilityRegistry().has(method)) {
       throw new Error(`Unknown host method: ${method}`);
     }
-    // Restore the documented "task-board utility only" gate (see
-    // TASK_BOARD_ONLY_METHODS above). The denied call is still audited.
+    // Gate sensitive methods on a real permission slot (fix B — see
+    // SENSITIVE_METHOD_SLOTS above). The denied call is still audited; an
+    // un-upgraded task-board is grandfathered in by isLegacyTaskBoard.
+    const requiredSlot = SENSITIVE_METHOD_SLOTS[method];
     if (
-      TASK_BOARD_ONLY_METHODS.has(method) &&
-      ctx.utility.manifest.id !== "task-board"
+      requiredSlot &&
+      !hasSensitiveSlot(ctx.utility.manifest, requiredSlot) &&
+      !isLegacyTaskBoard(ctx.utility.manifest)
     ) {
       throw new Error(
-        `utility "${ctx.utility.manifest.id}" is not allowed to call ${method} (restricted to the task-board utility)`,
+        `utility "${ctx.utility.manifest.id}" lacks permission "${requiredSlot}" required for ${method}`,
       );
     }
     // Route through the unified CapabilityRegistry. The registered run wraps
@@ -726,6 +757,13 @@ async function kbAdd(
     if (!ok) {
       throw new Error(`kb kind "${args.kind}" not in manifest allowlist`);
     }
+  }
+  // Owner-enforced kinds (Share Plane): if a provider has CLAIMED this kind,
+  // only that provider may write it — stops a consumer forging another
+  // utility's owned data. Unclaimed / legacy kinds behave exactly as before.
+  const kindOwner = await getKindOwner(args.kind);
+  if (kindOwner && kindOwner !== ctx.utility.manifest.id) {
+    throw new Error(`kb.add: kind "${args.kind}" is owned by utility "${kindOwner}"`);
   }
   const targetRoot = await resolveTargetRoot(ctx, args.rootId);
   const written = await writeKbEntry({
