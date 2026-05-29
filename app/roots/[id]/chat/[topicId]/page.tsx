@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { getRoot } from "@/lib/registry";
 import { getTopic } from "@/lib/server/topics";
+import { loadSettings } from "@/lib/settings/store";
 import { readEvents } from "@/lib/server/agents/events-log";
 import { agentManager } from "@/lib/server/agents/manager";
 import { ChatView } from "./_components/chat-view";
@@ -23,6 +24,13 @@ export default async function ChatPage({
   if (!entry) notFound();
   const topic = await getTopic(entry.path, topicId);
   if (!topic) notFound();
+  // Effective harness/model/language — what a turn ACTUALLY runs with. Every
+  // interactive turn resolves these live from `assignments.chat` (see
+  // startOrchestratorTurn), so the topic's own meta is a stale creation-time
+  // snapshot: switching the model in Settings wouldn't update it. Show the
+  // live config instead so the header never lies.
+  const settings = await loadSettings();
+  const effective = settings.assignments.chat;
   const events = await readEvents(entry.path, topicId);
   // Backfill: pre-events topics still have user messages only in the .md
   // file. If events.jsonl is empty, fabricate user-message events so the UI
@@ -49,14 +57,14 @@ export default async function ChatPage({
           <h1 className="text-base font-medium truncate">{topic.meta.title}</h1>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <Badge variant="outline" className="font-mono">
-              {topic.meta.harness ?? "?"}
+              {effective.harness}
             </Badge>
-            {topic.meta.model && (
+            {effective.model && (
               <Badge variant="secondary" className="font-mono">
-                {topic.meta.model}
+                {effective.model}
               </Badge>
             )}
-            {topic.meta.language && <span>lang: {topic.meta.language}</span>}
+            <span>lang: {settings.language}</span>
             <span className="ml-auto font-mono">
               {new Date(topic.meta.updatedAt).toLocaleString()}
             </span>
