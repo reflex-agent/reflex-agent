@@ -1,20 +1,23 @@
 # Cross-utility data sharing — the Share Plane
 
-> **Status: core implemented; React UI is the remaining follow-up.** Stages
-> 0–4 of the [migration](#migration) have landed: the manifest schema
-> (`provides`/`consumes` + the `shares`/`tasks`/`worktree` permission slots),
-> the grant ledger (`grants.json`) and provider directory (`providers.json`),
-> the four host methods (`kb.scopedList` / `kb.scopedRead` /
-> `capabilities.invoke` / `capabilities.listProviders`), the permission-slot
-> gate that replaced the task-board id-gate (fix B), owner-enforced `kbAdd`,
-> install/uninstall directory refresh + grant pruning, and the opt-in
-> `requireScopedReads` posture — all unit- and integration-tested. **Not yet
-> built:** the React surfaces — the install-time consent dialog, the
-> just-in-time `grant-request` directive shown in chat, and the
-> Settings → Sharing revoke page (its server actions exist in
-> `sharing-actions.ts`) — plus shipping the `writer-studio` utility and
-> `task-board`'s `provides`/slot declarations in their own repos. Until a
-> provider declares its slots it is grandfathered in by `isLegacyTaskBoard`.
+> **Status: shipped (core + UI).** Stages 0–4 of the [migration](#migration)
+> are implemented — the manifest schema (`provides`/`consumes` + the
+> `shares`/`tasks`/`worktree` slots), the grant ledger (`grants.json`) and
+> provider directory (`providers.json`), the four host methods
+> (`kb.scopedList` / `kb.scopedRead` / `capabilities.invoke` /
+> `capabilities.listProviders`), the permission-slot gate that replaced the
+> task-board id-gate (fix B), owner-enforced `kbAdd`, install/uninstall refresh
+> + grant pruning, and the opt-in `requireScopedReads` posture — and the
+> user-facing surfaces have landed: **Settings → Sharing** (review + revoke
+> grants, the posture toggle, the provider directory), **just-in-time consent**
+> (a host-rendered prompt raised in the utility iframe wrapper on
+> `grant_required`, which records the grant and retries the call), and
+> **install-preview transparency** (sensitive slots + provides/consumes).
+> **Remaining follow-up:** JIT consent for **worker / scheduled-workflow**
+> contexts (which can't prompt and rely on a pre-existing grant); "allow once"
+> / interface-level grants; and shipping the `writer-studio` utility and
+> `task-board`'s `provides`/slot declarations in their own repos (until a
+> provider declares its slots it is grandfathered in by `isLegacyTaskBoard`).
 
 Utilities are sandboxed: each gets its own `fs` data dir, its own secrets, and
 talks to the host only through the permission-gated, audited host API. That
